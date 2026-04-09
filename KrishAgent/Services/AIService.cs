@@ -168,18 +168,38 @@ namespace KrishAgent.Services
                             "You are a disciplined trading analysis assistant. Return only valid JSON. Never wrap the JSON in markdown code fences. Use exactly one result per input symbol."
                     },
                     new { role = "user", content = prompt }
-                },
-                temperature = 0
+                }
             };
 
             if (UsesMaxCompletionTokens(ConfiguredModel))
+            {
+                if (SupportsTemperatureOverride(ConfiguredModel))
+                {
+                    return new
+                    {
+                        requestBody.model,
+                        requestBody.messages,
+                        temperature = 0,
+                        max_completion_tokens = maxOutputTokens
+                    };
+                }
+
+                return new
+                {
+                    requestBody.model,
+                    requestBody.messages,
+                    max_completion_tokens = maxOutputTokens
+                };
+            }
+
+            if (SupportsTemperatureOverride(ConfiguredModel))
             {
                 return new
                 {
                     requestBody.model,
                     requestBody.messages,
-                    requestBody.temperature,
-                    max_completion_tokens = maxOutputTokens
+                    temperature = 0,
+                    max_tokens = maxOutputTokens
                 };
             }
 
@@ -187,7 +207,6 @@ namespace KrishAgent.Services
             {
                 requestBody.model,
                 requestBody.messages,
-                requestBody.temperature,
                 max_tokens = maxOutputTokens
             };
         }
@@ -259,6 +278,16 @@ namespace KrishAgent.Services
                    model.StartsWith("o1", StringComparison.OrdinalIgnoreCase) ||
                    model.StartsWith("o3", StringComparison.OrdinalIgnoreCase) ||
                    model.StartsWith("o4", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool SupportsTemperatureOverride(string model)
+        {
+            if (string.IsNullOrWhiteSpace(model))
+            {
+                return true;
+            }
+
+            return !model.StartsWith("gpt-5", StringComparison.OrdinalIgnoreCase);
         }
 
         private static string BuildPrompt(IReadOnlyCollection<StockSnapshot> stocks)
