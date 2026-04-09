@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: krish-agent-api
+    name: trading-agent-api-arungopichand
     runtime: docker
     branch: main
     rootDir: KrishAgent
