@@ -1,8 +1,14 @@
 using KrishAgent.Services;
 using Microsoft.EntityFrameworkCore;
 using KrishAgent.Data;
+using System.Reflection;
 
 var builder = WebApplication.CreateBuilder(args);
+
+if (builder.Environment.IsDevelopment())
+{
+    builder.Configuration.AddUserSecrets(Assembly.GetExecutingAssembly(), optional: true);
+}
 
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
