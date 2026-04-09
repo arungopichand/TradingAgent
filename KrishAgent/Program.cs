@@ -77,13 +77,23 @@ await using (var startupScope = app.Services.CreateAsyncScope())
 
     try
     {
-        await dbContext.Database.MigrateAsync();
+        if (dbContext.Database.IsNpgsql())
+        {
+            await dbContext.Database.EnsureCreatedAsync();
+            startupLogger.LogInformation("Database schema ensured successfully for PostgreSQL");
+        }
+        else
+        {
+            await dbContext.Database.MigrateAsync();
+            startupLogger.LogInformation("Database migrations applied successfully");
+        }
+
         await dataService.EnsureWatchlistsSeededAsync(tradingOptions.Value);
-        startupLogger.LogInformation("Database migrations applied successfully");
+        startupLogger.LogInformation("Database seed completed successfully");
     }
     catch (Exception ex)
     {
-        startupLogger.LogError(ex, "Failed to apply database migrations");
+        startupLogger.LogError(ex, "Failed to initialize database");
         throw;
     }
 }
