@@ -56,6 +56,37 @@ interface AlertItem {
   createdAt: string;
 }
 
+interface DayTradingIdea {
+  symbol: string;
+  action: string;
+  direction: string;
+  setup: string;
+  currentPrice: number;
+  entryPrice: number;
+  stopLoss: number;
+  targetPrice1: number;
+  targetPrice2: number;
+  riskRewardRatio: number;
+  rsi: number;
+  momentumPercent: number;
+  dayChangePercent: number;
+  volume: number;
+  confidence: number;
+  whyItWasPicked: string;
+  whatToDo: string;
+  whenToSell: string;
+  beginnerTip: string;
+  lastUpdatedUtc: string;
+}
+
+interface DayTradingBoard {
+  generatedAtUtc: string;
+  timeframe: string;
+  marketStatus: string;
+  beginnerNote: string;
+  picks: DayTradingIdea[];
+}
+
 export default function Home() {
   const apiBase =
     configuredApiBase ||
@@ -63,8 +94,10 @@ export default function Home() {
       ? 'http://localhost:5220/api'
       : `http://${window.location.hostname}:5220/api`);
 
-  const [activeTab, setActiveTab] = useState<'analysis' | 'portfolio' | 'trades' | 'alerts'>('analysis');
+  const [activeTab, setActiveTab] = useState<'analysis' | 'intraday' | 'penny' | 'portfolio' | 'trades' | 'alerts'>('analysis');
   const [analysis, setAnalysis] = useState<AnalysisResult[]>([]);
+  const [dayTradingBoard, setDayTradingBoard] = useState<DayTradingBoard | null>(null);
+  const [pennyStockBoard, setPennyStockBoard] = useState<DayTradingBoard | null>(null);
   const [portfolio, setPortfolio] = useState<PortfolioPosition[]>([]);
   const [trades, setTrades] = useState<Trade[]>([]);
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
@@ -72,6 +105,8 @@ export default function Home() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [analysisUpdatedAt, setAnalysisUpdatedAt] = useState<string | null>(null);
+  const [dayTradingUpdatedAt, setDayTradingUpdatedAt] = useState<string | null>(null);
+  const [pennyStocksUpdatedAt, setPennyStocksUpdatedAt] = useState<string | null>(null);
   const [portfolioForm, setPortfolioForm] = useState({
     symbol: '',
     quantity: 0,
@@ -106,6 +141,10 @@ export default function Home() {
   useEffect(() => {
     if (activeTab === 'analysis') {
       fetchAnalysis();
+    } else if (activeTab === 'intraday') {
+      fetchDayTrading();
+    } else if (activeTab === 'penny') {
+      fetchPennyStocks();
     } else if (activeTab === 'portfolio') {
       fetchPortfolio();
     } else if (activeTab === 'trades') {
@@ -122,6 +161,24 @@ export default function Home() {
       }
     }, 300000);
 
+    return () => clearInterval(interval);
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (activeTab !== 'intraday') {
+      return;
+    }
+
+    const interval = setInterval(fetchDayTrading, 60000);
+    return () => clearInterval(interval);
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (activeTab !== 'penny') {
+      return;
+    }
+
+    const interval = setInterval(fetchPennyStocks, 60000);
     return () => clearInterval(interval);
   }, [activeTab]);
 
@@ -158,6 +215,44 @@ export default function Home() {
     } catch (err) {
       setAnalysis([]);
       setError(err instanceof Error ? err.message : 'Failed to load analysis');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchDayTrading = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(`${apiBase}/trade/intraday`);
+      if (!response.ok) {
+        throw new Error(await handleApiError(response));
+      }
+
+      setDayTradingBoard(await response.json());
+      setDayTradingUpdatedAt(new Date().toLocaleTimeString());
+    } catch (err) {
+      setDayTradingBoard(null);
+      setError(err instanceof Error ? err.message : 'Failed to load day trading ideas');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchPennyStocks = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(`${apiBase}/trade/penny-stocks`);
+      if (!response.ok) {
+        throw new Error(await handleApiError(response));
+      }
+
+      setPennyStockBoard(await response.json());
+      setPennyStocksUpdatedAt(new Date().toLocaleTimeString());
+    } catch (err) {
+      setPennyStockBoard(null);
+      setError(err instanceof Error ? err.message : 'Failed to load penny stock ideas');
     } finally {
       setLoading(false);
     }
@@ -414,10 +509,22 @@ export default function Home() {
 
   const activeAlerts = alerts.filter((alert) => !alert.isTriggered);
   const triggeredAlerts = alerts.filter((alert) => alert.isTriggered);
+  const activeUpdatedAt =
+    activeTab === 'analysis'
+      ? analysisUpdatedAt
+      : activeTab === 'intraday'
+      ? dayTradingUpdatedAt
+      : activeTab === 'penny'
+      ? pennyStocksUpdatedAt
+      : null;
+  const formatCurrency = (value: number) => `$${value.toFixed(2)}`;
+  const formatSignedPercent = (value: number) => `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`;
 
   const renderTabs = () => {
     const tabs = [
       { key: 'analysis', label: 'Analysis' },
+      { key: 'intraday', label: 'Day Trading' },
+      { key: 'penny', label: 'Penny Stocks' },
       { key: 'portfolio', label: 'Portfolio' },
       { key: 'trades', label: 'Trades' },
       { key: 'alerts', label: 'Alerts' },
@@ -440,8 +547,8 @@ export default function Home() {
             </button>
           ))}
         </div>
-        {activeTab === 'analysis' && analysisUpdatedAt && (
-          <div className="text-sm text-slate-400">Last refreshed at {analysisUpdatedAt}</div>
+        {activeUpdatedAt && (
+          <div className="text-sm text-slate-400">Last refreshed at {activeUpdatedAt}</div>
         )}
       </div>
     );
@@ -465,6 +572,277 @@ export default function Home() {
           >
             <p className={error ? 'text-rose-200' : 'text-emerald-200'}>{error ?? message}</p>
           </div>
+        )}
+
+        {activeTab === 'intraday' && (
+          <section>
+            <div className="rounded-[2rem] border border-slate-800 bg-gradient-to-br from-slate-900 via-slate-900 to-emerald-950/40 p-6 shadow-lg shadow-slate-950/40">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div className="max-w-3xl">
+                  <p className="text-sm uppercase tracking-[0.25em] text-emerald-300/80">Day Trading</p>
+                  <h2 className="mt-2 text-3xl font-semibold text-white">Five live intraday setups for beginners</h2>
+                  <p className="mt-3 text-sm leading-6 text-slate-300">
+                    This tab scans a liquid watchlist using live intraday market data and gives simple entry, stop loss,
+                    and exit plans. Green cards are long ideas. Red cards are short ideas, so beginners can skip them if
+                    they do not short stocks.
+                  </p>
+                </div>
+                <button
+                  onClick={fetchDayTrading}
+                  className="rounded-full bg-emerald-400 px-5 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-300"
+                >
+                  Refresh Ideas
+                </button>
+              </div>
+
+              {dayTradingBoard && (
+                <div className="mt-6 grid gap-4 lg:grid-cols-3">
+                  <div className="rounded-3xl border border-slate-800 bg-slate-950/70 p-4">
+                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Timeframe</p>
+                    <p className="mt-2 text-sm text-slate-200">{dayTradingBoard.timeframe}</p>
+                  </div>
+                  <div className="rounded-3xl border border-slate-800 bg-slate-950/70 p-4">
+                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Market Note</p>
+                    <p className="mt-2 text-sm text-slate-200">{dayTradingBoard.marketStatus}</p>
+                  </div>
+                  <div className="rounded-3xl border border-slate-800 bg-slate-950/70 p-4">
+                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Beginner Note</p>
+                    <p className="mt-2 text-sm text-slate-200">{dayTradingBoard.beginnerNote}</p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {loading && <div className="mt-6 rounded-3xl bg-slate-900 p-8 text-center text-slate-400">Loading day trading ideas...</div>}
+
+            {!loading && error && <div className="mt-6 rounded-3xl bg-rose-950 p-6 text-slate-200">{error}</div>}
+
+            {!loading && !error && (!dayTradingBoard || dayTradingBoard.picks.length === 0) && (
+              <div className="mt-6 rounded-3xl bg-slate-900 p-8 text-center text-slate-400">No intraday trade ideas are available yet.</div>
+            )}
+
+            {!loading && !error && dayTradingBoard && dayTradingBoard.picks.length > 0 && (
+              <div className="mt-6 grid gap-5 xl:grid-cols-2">
+                {dayTradingBoard.picks.map((idea, index) => (
+                  <article
+                    key={idea.symbol}
+                    className={`rounded-[2rem] border p-6 shadow-lg shadow-slate-950/40 ${
+                      idea.action === 'buy'
+                        ? 'border-emerald-500/20 bg-emerald-950/10'
+                        : 'border-rose-500/20 bg-rose-950/10'
+                    }`}
+                  >
+                    <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                      <div>
+                        <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Pick {index + 1}</p>
+                        <h3 className="mt-2 text-3xl font-semibold text-white">{idea.symbol}</h3>
+                        <p className="mt-2 text-sm text-slate-300">{idea.setup}</p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <span
+                          className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
+                            idea.action === 'buy'
+                              ? 'bg-emerald-400/15 text-emerald-300'
+                              : 'bg-rose-400/15 text-rose-300'
+                          }`}
+                        >
+                          {idea.action === 'buy' ? 'BUY / LONG' : 'SELL / SHORT'}
+                        </span>
+                        <span className="inline-flex rounded-full bg-slate-950 px-3 py-1 text-xs font-semibold text-slate-300">
+                          {idea.confidence}% confidence
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                      <div className="rounded-3xl bg-slate-950/80 p-4">
+                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Current</p>
+                        <p className="mt-2 text-xl font-semibold text-white">{formatCurrency(idea.currentPrice)}</p>
+                      </div>
+                      <div className="rounded-3xl bg-slate-950/80 p-4">
+                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Entry</p>
+                        <p className="mt-2 text-xl font-semibold text-white">{formatCurrency(idea.entryPrice)}</p>
+                      </div>
+                      <div className="rounded-3xl bg-slate-950/80 p-4">
+                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Stop Loss</p>
+                        <p className="mt-2 text-xl font-semibold text-white">{formatCurrency(idea.stopLoss)}</p>
+                      </div>
+                      <div className="rounded-3xl bg-slate-950/80 p-4">
+                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Reward / Risk</p>
+                        <p className="mt-2 text-xl font-semibold text-white">{idea.riskRewardRatio.toFixed(2)}R</p>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                      <div className="rounded-3xl border border-slate-800 bg-slate-950/60 p-4">
+                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Target 1</p>
+                        <p className="mt-2 text-lg font-semibold text-white">{formatCurrency(idea.targetPrice1)}</p>
+                      </div>
+                      <div className="rounded-3xl border border-slate-800 bg-slate-950/60 p-4">
+                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Target 2</p>
+                        <p className="mt-2 text-lg font-semibold text-white">{formatCurrency(idea.targetPrice2)}</p>
+                      </div>
+                      <div className="rounded-3xl border border-slate-800 bg-slate-950/60 p-4">
+                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">RSI / Momentum</p>
+                        <p className="mt-2 text-sm text-slate-200">RSI {idea.rsi.toFixed(2)} / {formatSignedPercent(idea.momentumPercent)}</p>
+                      </div>
+                      <div className="rounded-3xl border border-slate-800 bg-slate-950/60 p-4">
+                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Day Change / Volume</p>
+                        <p className="mt-2 text-sm text-slate-200">{formatSignedPercent(idea.dayChangePercent)} / {idea.volume.toLocaleString()} shares</p>
+                      </div>
+                    </div>
+
+                    <div className="mt-5 grid gap-4 lg:grid-cols-[1.15fr_1fr]">
+                      <div className="rounded-3xl bg-slate-950/80 p-5">
+                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">What To Do</p>
+                        <p className="mt-3 text-sm leading-6 text-slate-200">{idea.whatToDo}</p>
+                        <p className="mt-4 text-xs uppercase tracking-[0.2em] text-slate-500">Why It Was Picked</p>
+                        <p className="mt-3 text-sm leading-6 text-slate-300">{idea.whyItWasPicked}</p>
+                      </div>
+                      <div className="rounded-3xl bg-slate-950/80 p-5">
+                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">When To Sell</p>
+                        <p className="mt-3 text-sm leading-6 text-slate-200">{idea.whenToSell}</p>
+                        <p className="mt-4 text-xs uppercase tracking-[0.2em] text-slate-500">Beginner Tip</p>
+                        <p className="mt-3 text-sm leading-6 text-slate-300">{idea.beginnerTip}</p>
+                        <p className="mt-4 text-xs text-slate-500">
+                          Last market update: {new Date(idea.lastUpdatedUtc).toLocaleString()}
+                        </p>
+                      </div>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
+
+        {activeTab === 'penny' && (
+          <section>
+            <div className="rounded-[2rem] border border-slate-800 bg-gradient-to-br from-slate-900 via-slate-900 to-amber-950/40 p-6 shadow-lg shadow-slate-950/40">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                <div className="max-w-3xl">
+                  <p className="text-sm uppercase tracking-[0.25em] text-amber-300/80">Penny Stocks</p>
+                  <h2 className="mt-2 text-3xl font-semibold text-white">Best live low-priced setups for small-cap momentum</h2>
+                  <p className="mt-3 text-sm leading-6 text-slate-300">
+                    This tab scans low-priced stocks from the live market and shows only the names that still meet the penny-stock
+                    price filter. These are higher-risk trades, so the plan is simple: wait for the entry, keep the stop loss tight,
+                    and take profits quickly.
+                  </p>
+                </div>
+                <button
+                  onClick={fetchPennyStocks}
+                  className="rounded-full bg-amber-300 px-5 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-amber-200"
+                >
+                  Refresh Penny Ideas
+                </button>
+              </div>
+
+              {pennyStockBoard && (
+                <div className="mt-6 grid gap-4 lg:grid-cols-3">
+                  <div className="rounded-3xl border border-slate-800 bg-slate-950/70 p-4">
+                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Timeframe</p>
+                    <p className="mt-2 text-sm text-slate-200">{pennyStockBoard.timeframe}</p>
+                  </div>
+                  <div className="rounded-3xl border border-slate-800 bg-slate-950/70 p-4">
+                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Market Note</p>
+                    <p className="mt-2 text-sm text-slate-200">{pennyStockBoard.marketStatus}</p>
+                  </div>
+                  <div className="rounded-3xl border border-slate-800 bg-slate-950/70 p-4">
+                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Risk Note</p>
+                    <p className="mt-2 text-sm text-slate-200">{pennyStockBoard.beginnerNote}</p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {loading && <div className="mt-6 rounded-3xl bg-slate-900 p-8 text-center text-slate-400">Loading penny stock ideas...</div>}
+
+            {!loading && error && <div className="mt-6 rounded-3xl bg-rose-950 p-6 text-slate-200">{error}</div>}
+
+            {!loading && !error && (!pennyStockBoard || pennyStockBoard.picks.length === 0) && (
+              <div className="mt-6 rounded-3xl bg-slate-900 p-8 text-center text-slate-400">No penny stock ideas are available right now.</div>
+            )}
+
+            {!loading && !error && pennyStockBoard && pennyStockBoard.picks.length > 0 && (
+              <div className="mt-6 grid gap-5 xl:grid-cols-2">
+                {pennyStockBoard.picks.map((idea, index) => (
+                  <article key={idea.symbol} className="rounded-[2rem] border border-amber-500/20 bg-amber-950/10 p-6 shadow-lg shadow-slate-950/40">
+                    <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                      <div>
+                        <p className="text-xs uppercase tracking-[0.25em] text-slate-500">Penny Pick {index + 1}</p>
+                        <h3 className="mt-2 text-3xl font-semibold text-white">{idea.symbol}</h3>
+                        <p className="mt-2 text-sm text-slate-300">{idea.setup}</p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <span className="inline-flex rounded-full bg-amber-300/15 px-3 py-1 text-xs font-semibold text-amber-200">
+                          BUY / MOMENTUM
+                        </span>
+                        <span className="inline-flex rounded-full bg-slate-950 px-3 py-1 text-xs font-semibold text-slate-300">
+                          {idea.confidence}% confidence
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                      <div className="rounded-3xl bg-slate-950/80 p-4">
+                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Current</p>
+                        <p className="mt-2 text-xl font-semibold text-white">{formatCurrency(idea.currentPrice)}</p>
+                      </div>
+                      <div className="rounded-3xl bg-slate-950/80 p-4">
+                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Entry</p>
+                        <p className="mt-2 text-xl font-semibold text-white">{formatCurrency(idea.entryPrice)}</p>
+                      </div>
+                      <div className="rounded-3xl bg-slate-950/80 p-4">
+                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Stop Loss</p>
+                        <p className="mt-2 text-xl font-semibold text-white">{formatCurrency(idea.stopLoss)}</p>
+                      </div>
+                      <div className="rounded-3xl bg-slate-950/80 p-4">
+                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Reward / Risk</p>
+                        <p className="mt-2 text-xl font-semibold text-white">{idea.riskRewardRatio.toFixed(2)}R</p>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                      <div className="rounded-3xl border border-slate-800 bg-slate-950/60 p-4">
+                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Target 1</p>
+                        <p className="mt-2 text-lg font-semibold text-white">{formatCurrency(idea.targetPrice1)}</p>
+                      </div>
+                      <div className="rounded-3xl border border-slate-800 bg-slate-950/60 p-4">
+                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Target 2</p>
+                        <p className="mt-2 text-lg font-semibold text-white">{formatCurrency(idea.targetPrice2)}</p>
+                      </div>
+                      <div className="rounded-3xl border border-slate-800 bg-slate-950/60 p-4">
+                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">RSI / Momentum</p>
+                        <p className="mt-2 text-sm text-slate-200">RSI {idea.rsi.toFixed(2)} / {formatSignedPercent(idea.momentumPercent)}</p>
+                      </div>
+                      <div className="rounded-3xl border border-slate-800 bg-slate-950/60 p-4">
+                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Day Change / Volume</p>
+                        <p className="mt-2 text-sm text-slate-200">{formatSignedPercent(idea.dayChangePercent)} / {idea.volume.toLocaleString()} shares</p>
+                      </div>
+                    </div>
+
+                    <div className="mt-5 grid gap-4 lg:grid-cols-[1.15fr_1fr]">
+                      <div className="rounded-3xl bg-slate-950/80 p-5">
+                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">What To Do</p>
+                        <p className="mt-3 text-sm leading-6 text-slate-200">{idea.whatToDo}</p>
+                        <p className="mt-4 text-xs uppercase tracking-[0.2em] text-slate-500">Why It Was Picked</p>
+                        <p className="mt-3 text-sm leading-6 text-slate-300">{idea.whyItWasPicked}</p>
+                      </div>
+                      <div className="rounded-3xl bg-slate-950/80 p-5">
+                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">When To Sell</p>
+                        <p className="mt-3 text-sm leading-6 text-slate-200">{idea.whenToSell}</p>
+                        <p className="mt-4 text-xs uppercase tracking-[0.2em] text-slate-500">Beginner Tip</p>
+                        <p className="mt-3 text-sm leading-6 text-slate-300">{idea.beginnerTip}</p>
+                        <p className="mt-4 text-xs text-slate-500">
+                          Last market update: {new Date(idea.lastUpdatedUtc).toLocaleString()}
+                        </p>
+                      </div>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
         )}
 
         {activeTab === 'analysis' && (
@@ -664,8 +1042,8 @@ export default function Home() {
                         <div className="mt-4 grid gap-2 sm:grid-cols-2">
                           <div className="text-sm text-slate-400">Entry price: ${position.entryPrice.toFixed(2)}</div>
                           <div className="text-sm text-slate-400">Date: {new Date(position.entryDate).toLocaleDateString()}</div>
-                          <div className="text-sm text-slate-400">Stop loss: {position.stopLoss ? `$${position.stopLoss.toFixed(2)}` : '—'}</div>
-                          <div className="text-sm text-slate-400">Take profit: {position.takeProfit ? `$${position.takeProfit.toFixed(2)}` : '—'}</div>
+                          <div className="text-sm text-slate-400">Stop loss: {position.stopLoss ? `$${position.stopLoss.toFixed(2)}` : 'N/A'}</div>
+                          <div className="text-sm text-slate-400">Take profit: {position.takeProfit ? `$${position.takeProfit.toFixed(2)}` : 'N/A'}</div>
                         </div>
                         {position.notes && <p className="mt-4 text-sm text-slate-300">Notes: {position.notes}</p>}
                       </div>
@@ -1032,7 +1410,7 @@ export default function Home() {
                       <div key={trade.id} className="rounded-3xl border border-slate-800 bg-slate-950 p-4">
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                           <div>
-                            <p className="text-sm text-slate-400">{trade.symbol} • {trade.side.toUpperCase()}</p>
+                            <p className="text-sm text-slate-400">{trade.symbol} / {trade.side.toUpperCase()}</p>
                             <p className="text-xl font-semibold text-white">{trade.quantity} @ ${trade.entryPrice.toFixed(2)}</p>
                           </div>
                           <button
@@ -1045,8 +1423,8 @@ export default function Home() {
                         <div className="mt-4 grid gap-2 sm:grid-cols-2">
                           <div className="text-sm text-slate-400">Entry: {new Date(trade.entryDate).toLocaleDateString()}</div>
                           <div className="text-sm text-slate-400">Exit: {trade.exitDate ? new Date(trade.exitDate).toLocaleDateString() : 'Open'}</div>
-                          <div className="text-sm text-slate-400">PnL: {trade.pnl !== null && trade.pnl !== undefined ? `$${trade.pnl.toFixed(2)}` : '—'}</div>
-                          <div className="text-sm text-slate-400">PnL %: {trade.pnlPercent !== null && trade.pnlPercent !== undefined ? `${trade.pnlPercent.toFixed(2)}%` : '—'}</div>
+                          <div className="text-sm text-slate-400">PnL: {trade.pnl !== null && trade.pnl !== undefined ? `$${trade.pnl.toFixed(2)}` : 'N/A'}</div>
+                          <div className="text-sm text-slate-400">PnL %: {trade.pnlPercent !== null && trade.pnlPercent !== undefined ? `${trade.pnlPercent.toFixed(2)}%` : 'N/A'}</div>
                         </div>
                         {trade.exitReason && <p className="mt-4 text-sm text-slate-300">Exit: {trade.exitReason}</p>}
                         {trade.notes && <p className="mt-2 text-sm text-slate-300">Notes: {trade.notes}</p>}

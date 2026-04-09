@@ -15,6 +15,8 @@ namespace KrishAgent.Controllers
         private readonly IndicatorService _indicatorService;
         private readonly AIService _aiService;
         private readonly DataService _dataService;
+        private readonly IntradayTradingService _intradayTradingService;
+        private readonly PennyStockTradingService _pennyStockTradingService;
         private readonly TradingOptions _tradingOptions;
 
         public TradingController(
@@ -22,12 +24,16 @@ namespace KrishAgent.Controllers
             IndicatorService indicatorService,
             AIService aiService,
             DataService dataService,
+            IntradayTradingService intradayTradingService,
+            PennyStockTradingService pennyStockTradingService,
             IOptions<TradingOptions> tradingOptions)
         {
             _marketService = marketService;
             _indicatorService = indicatorService;
             _aiService = aiService;
             _dataService = dataService;
+            _intradayTradingService = intradayTradingService;
+            _pennyStockTradingService = pennyStockTradingService;
             _tradingOptions = tradingOptions.Value;
         }
 
@@ -57,6 +63,34 @@ namespace KrishAgent.Controllers
             }
 
             return await PerformAnalysis(request.Symbols.ToArray());
+        }
+
+        [HttpGet("trade/intraday")]
+        public async Task<IActionResult> GetIntradayTradingIdeas()
+        {
+            try
+            {
+                var board = await _intradayTradingService.GetBoardAsync(HttpContext?.RequestAborted ?? CancellationToken.None);
+                return Ok(board);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = "Failed to load intraday trading ideas", details = ex.Message });
+            }
+        }
+
+        [HttpGet("trade/penny-stocks")]
+        public async Task<IActionResult> GetPennyStockIdeas()
+        {
+            try
+            {
+                var board = await _pennyStockTradingService.GetBoardAsync(HttpContext?.RequestAborted ?? CancellationToken.None);
+                return Ok(board);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = "Failed to load penny stock ideas", details = ex.Message });
+            }
         }
 
         [HttpGet("stock/{symbol}/history")]
