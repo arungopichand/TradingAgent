@@ -147,6 +147,15 @@ namespace KrishAgent.Services
             CancellationToken cancellationToken)
         {
             var prompt = BuildPrompt(stocks);
+            var maxOutputTokens = Math.Clamp((stocks.Count * 90) + 120, 300, 900);
+            var requestBody = BuildChatCompletionRequestBody(prompt, maxOutputTokens);
+            var json = JsonSerializer.Serialize(requestBody, JsonOptions);
+
+            return await SendChatCompletionAsync(json, cancellationToken);
+        }
+
+        private object BuildChatCompletionRequestBody(string prompt, int maxOutputTokens)
+        {
             var requestBody = new
             {
                 model = ConfiguredModel,
@@ -160,11 +169,31 @@ namespace KrishAgent.Services
                     },
                     new { role = "user", content = prompt }
                 },
-                temperature = 0,
-                max_tokens = Math.Clamp((stocks.Count * 90) + 120, 300, 900)
+                temperature = 0
             };
 
-            var json = JsonSerializer.Serialize(requestBody, JsonOptions);
+            if (UsesMaxCompletionTokens(ConfiguredModel))
+            {
+                return new
+                {
+                    requestBody.model,
+                    requestBody.messages,
+                    requestBody.temperature,
+                    max_completion_tokens = maxOutputTokens
+                };
+            }
+
+            return new
+            {
+                requestBody.model,
+                requestBody.messages,
+                requestBody.temperature,
+                max_tokens = maxOutputTokens
+            };
+        }
+
+        private async Task<string> SendChatCompletionAsync(string json, CancellationToken cancellationToken)
+        {
             var content = new StringContent(json, Encoding.UTF8, "application/json");
             var request = new HttpRequestMessage(HttpMethod.Post, "https://api.openai.com/v1/chat/completions")
             {
@@ -217,6 +246,19 @@ namespace KrishAgent.Services
             }
 
             return aiResponse;
+        }
+
+        private static bool UsesMaxCompletionTokens(string model)
+        {
+            if (string.IsNullOrWhiteSpace(model))
+            {
+                return false;
+            }
+
+            return model.StartsWith("gpt-5", StringComparison.OrdinalIgnoreCase) ||
+                   model.StartsWith("o1", StringComparison.OrdinalIgnoreCase) ||
+                   model.StartsWith("o3", StringComparison.OrdinalIgnoreCase) ||
+                   model.StartsWith("o4", StringComparison.OrdinalIgnoreCase);
         }
 
         private static string BuildPrompt(IReadOnlyCollection<StockSnapshot> stocks)
