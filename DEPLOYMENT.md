@@ -50,7 +50,7 @@ Set the Production Branch to `main` so Vercel tracks the same branch as the Rend
 Set this environment variable in Vercel:
 
 - `NEXT_PUBLIC_API_BASE`
-  Example: `https://krish-agent-api.onrender.com/api`
+  Example: `https://trading-agent-api-arungopichand.onrender.com/api`
 
 Every push to GitHub will trigger:
 
