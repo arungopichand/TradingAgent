@@ -1,0 +1,35 @@
+# .NET build artifacts
+bin/
+obj/
+*/bin/
+*/obj/
+*.user
+*.suo
+*.userosscache
+*.csproj.user
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+*.log
+.vs/
+.vscode/
+
+# Node.js build artifacts
+node_modules/
+.next/
+out/
+/build/
+.DS_Store
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Local database
+trading.db

@@ -1,0 +1,6 @@
+@KrishAgent_HostAddress = http://localhost:5220
+
+GET {{KrishAgent_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
