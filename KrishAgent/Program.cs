@@ -6,6 +6,8 @@ using System.Reflection;
 using System.Net;
 using Microsoft.Extensions.Options;
 using System.Text;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Storage;
 
 var builder = WebApplication.CreateBuilder(args);
 ConfigureHostingPort(builder);
@@ -79,8 +81,16 @@ await using (var startupScope = app.Services.CreateAsyncScope())
     {
         if (dbContext.Database.IsNpgsql())
         {
-            await dbContext.Database.EnsureCreatedAsync();
-            startupLogger.LogInformation("Database schema ensured successfully for PostgreSQL");
+            if (!await ApplicationTablesExistAsync(dbContext))
+            {
+                var databaseCreator = dbContext.GetService<IRelationalDatabaseCreator>();
+                await databaseCreator.CreateTablesAsync();
+                startupLogger.LogInformation("Application tables created successfully for PostgreSQL");
+            }
+            else
+            {
+                startupLogger.LogInformation("Application tables already exist for PostgreSQL");
+            }
         }
         else
         {
@@ -290,6 +300,28 @@ static string ConvertDatabaseUrl(string databaseUrl)
     }
 
     return builder.ToString();
+}
+
+static async Task<bool> ApplicationTablesExistAsync(TradingContext dbContext)
+{
+    await using var connection = dbContext.Database.GetDbConnection();
+    if (connection.State != System.Data.ConnectionState.Open)
+    {
+        await connection.OpenAsync();
+    }
+
+    await using var command = connection.CreateCommand();
+    command.CommandText = """
+        SELECT EXISTS (
+            SELECT 1
+            FROM information_schema.tables
+            WHERE table_schema = 'public'
+              AND table_name = 'WatchlistEntries'
+        );
+        """;
+
+    var result = await command.ExecuteScalarAsync();
+    return result is bool exists && exists;
 }
 
 internal sealed record DatabaseConfiguration(string Provider, string ConnectionString);
