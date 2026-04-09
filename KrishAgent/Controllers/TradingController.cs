@@ -190,6 +190,179 @@ namespace KrishAgent.Controllers
             return NoContent();
         }
 
+        [HttpGet("portfolio")]
+        public async Task<IActionResult> GetPortfolioPositions([FromQuery] int limit = 100)
+        {
+            var positions = await _dataService.GetPortfolioPositionsAsync(limit);
+            return Ok(positions);
+        }
+
+        [HttpGet("portfolio/{id}")]
+        public async Task<IActionResult> GetPortfolioPosition(int id)
+        {
+            var position = await _dataService.GetPortfolioPositionByIdAsync(id);
+            if (position == null)
+            {
+                return NotFound(new { error = "Portfolio position not found" });
+            }
+
+            return Ok(position);
+        }
+
+        [HttpPost("portfolio")]
+        public async Task<IActionResult> CreatePortfolioPosition([FromBody] PortfolioPositionRequest request)
+        {
+            if (request == null || string.IsNullOrWhiteSpace(request.Symbol) || request.Quantity <= 0 || request.EntryPrice <= 0)
+            {
+                return BadRequest(new { error = "Symbol, quantity, and entry price are required" });
+            }
+
+            var position = new KrishAgent.Data.PortfolioPosition
+            {
+                Symbol = request.Symbol.Trim().ToUpperInvariant(),
+                Quantity = request.Quantity,
+                EntryPrice = request.EntryPrice,
+                EntryDate = request.EntryDate,
+                StopLoss = request.StopLoss,
+                TakeProfit = request.TakeProfit,
+                Notes = request.Notes?.Trim() ?? string.Empty,
+                UpdatedAt = DateTime.UtcNow
+            };
+
+            await _dataService.CreatePortfolioPositionAsync(position);
+            return CreatedAtAction(nameof(GetPortfolioPosition), new { id = position.Id }, position);
+        }
+
+        [HttpPut("portfolio/{id}")]
+        public async Task<IActionResult> UpdatePortfolioPosition(int id, [FromBody] PortfolioPositionRequest request)
+        {
+            if (request == null || string.IsNullOrWhiteSpace(request.Symbol) || request.Quantity <= 0 || request.EntryPrice <= 0)
+            {
+                return BadRequest(new { error = "Symbol, quantity, and entry price are required" });
+            }
+
+            var existing = await _dataService.GetPortfolioPositionByIdAsync(id);
+            if (existing == null)
+            {
+                return NotFound(new { error = "Portfolio position not found" });
+            }
+
+            existing.Symbol = request.Symbol.Trim().ToUpperInvariant();
+            existing.Quantity = request.Quantity;
+            existing.EntryPrice = request.EntryPrice;
+            existing.EntryDate = request.EntryDate;
+            existing.StopLoss = request.StopLoss;
+            existing.TakeProfit = request.TakeProfit;
+            existing.Notes = request.Notes?.Trim() ?? string.Empty;
+            existing.UpdatedAt = DateTime.UtcNow;
+
+            await _dataService.UpdatePortfolioPositionAsync(existing);
+            return Ok(existing);
+        }
+
+        [HttpDelete("portfolio/{id}")]
+        public async Task<IActionResult> DeletePortfolioPosition(int id)
+        {
+            var existing = await _dataService.GetPortfolioPositionByIdAsync(id);
+            if (existing == null)
+            {
+                return NotFound(new { error = "Portfolio position not found" });
+            }
+
+            await _dataService.DeletePortfolioPositionAsync(existing);
+            return NoContent();
+        }
+
+        [HttpGet("trades")]
+        public async Task<IActionResult> GetTrades([FromQuery] int limit = 100)
+        {
+            var trades = await _dataService.GetTradesAsync(limit);
+            return Ok(trades);
+        }
+
+        [HttpGet("trades/{id}")]
+        public async Task<IActionResult> GetTrade(int id)
+        {
+            var trade = await _dataService.GetTradeByIdAsync(id);
+            if (trade == null)
+            {
+                return NotFound(new { error = "Trade not found" });
+            }
+
+            return Ok(trade);
+        }
+
+        [HttpPost("trades")]
+        public async Task<IActionResult> CreateTrade([FromBody] TradeRequest request)
+        {
+            if (request == null || string.IsNullOrWhiteSpace(request.Symbol) || string.IsNullOrWhiteSpace(request.Side) || request.Quantity <= 0 || request.EntryPrice <= 0)
+            {
+                return BadRequest(new { error = "Symbol, side, quantity, and entry price are required" });
+            }
+
+            var trade = new KrishAgent.Data.Trade
+            {
+                Symbol = request.Symbol.Trim().ToUpperInvariant(),
+                Side = request.Side.Trim().ToLowerInvariant(),
+                Quantity = request.Quantity,
+                EntryPrice = request.EntryPrice,
+                EntryDate = request.EntryDate,
+                ExitPrice = request.ExitPrice,
+                ExitDate = request.ExitDate,
+                Pnl = request.Pnl,
+                PnlPercent = request.PnlPercent,
+                ExitReason = request.ExitReason?.Trim() ?? string.Empty,
+                Notes = request.Notes?.Trim() ?? string.Empty,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            await _dataService.CreateTradeAsync(trade);
+            return CreatedAtAction(nameof(GetTrade), new { id = trade.Id }, trade);
+        }
+
+        [HttpPut("trades/{id}")]
+        public async Task<IActionResult> UpdateTrade(int id, [FromBody] TradeRequest request)
+        {
+            if (request == null || string.IsNullOrWhiteSpace(request.Symbol) || string.IsNullOrWhiteSpace(request.Side) || request.Quantity <= 0 || request.EntryPrice <= 0)
+            {
+                return BadRequest(new { error = "Symbol, side, quantity, and entry price are required" });
+            }
+
+            var existing = await _dataService.GetTradeByIdAsync(id);
+            if (existing == null)
+            {
+                return NotFound(new { error = "Trade not found" });
+            }
+
+            existing.Symbol = request.Symbol.Trim().ToUpperInvariant();
+            existing.Side = request.Side.Trim().ToLowerInvariant();
+            existing.Quantity = request.Quantity;
+            existing.EntryPrice = request.EntryPrice;
+            existing.EntryDate = request.EntryDate;
+            existing.ExitPrice = request.ExitPrice;
+            existing.ExitDate = request.ExitDate;
+            existing.Pnl = request.Pnl;
+            existing.PnlPercent = request.PnlPercent;
+            existing.ExitReason = request.ExitReason?.Trim() ?? string.Empty;
+            existing.Notes = request.Notes?.Trim() ?? string.Empty;
+
+            await _dataService.UpdateTradeAsync(existing);
+            return Ok(existing);
+        }
+
+        [HttpDelete("trades/{id}")]
+        public async Task<IActionResult> DeleteTrade(int id)
+        {
+            var existing = await _dataService.GetTradeByIdAsync(id);
+            if (existing == null)
+            {
+                return NotFound(new { error = "Trade not found" });
+            }
+
+            await _dataService.DeleteTradeAsync(existing);
+            return NoContent();
+        }
+
         private async Task<IActionResult> PerformAnalysis(string[] symbols)
         {
             var normalizedSymbols = symbols

@@ -198,5 +198,141 @@ namespace KrishAgent.Services
                 _logger.LogError(ex, $"Error deleting alert {alert.Id}");
             }
         }
+
+        public async Task<List<PortfolioPosition>> GetPortfolioPositionsAsync(int limit = 100)
+        {
+            try
+            {
+                return await _context.PortfolioPositions
+                    .OrderByDescending(p => p.UpdatedAt)
+                    .Take(limit)
+                    .ToListAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error retrieving portfolio positions");
+                return new List<PortfolioPosition>();
+            }
+        }
+
+        public async Task<PortfolioPosition?> GetPortfolioPositionByIdAsync(int id)
+        {
+            try
+            {
+                return await _context.PortfolioPositions.FindAsync(id);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error retrieving portfolio position {id}");
+                return null;
+            }
+        }
+
+        public async Task CreatePortfolioPositionAsync(PortfolioPosition position)
+        {
+            try
+            {
+                _context.PortfolioPositions.Add(position);
+                await _context.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error creating portfolio position");
+            }
+        }
+
+        public async Task UpdatePortfolioPositionAsync(PortfolioPosition position)
+        {
+            try
+            {
+                _context.PortfolioPositions.Update(position);
+                await _context.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error updating portfolio position {position.Id}");
+            }
+        }
+
+        public async Task DeletePortfolioPositionAsync(PortfolioPosition position)
+        {
+            try
+            {
+                _context.PortfolioPositions.Remove(position);
+                await _context.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error deleting portfolio position {position.Id}");
+            }
+        }
+
+        public async Task<List<Trade>> GetTradesAsync(int limit = 100)
+        {
+            try
+            {
+                return await _context.Trades
+                    .OrderByDescending(t => t.EntryDate)
+                    .Take(limit)
+                    .ToListAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error retrieving trades");
+                return new List<Trade>();
+            }
+        }
+
+        public async Task<Trade?> GetTradeByIdAsync(int id)
+        {
+            try
+            {
+                return await _context.Trades.FindAsync(id);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error retrieving trade {id}");
+                return null;
+            }
+        }
+
+        public async Task CreateTradeAsync(Trade trade)
+        {
+            try
+            {
+                _context.Trades.Add(trade);
+                await _context.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error creating trade");
+            }
+        }
+
+        public async Task UpdateTradeAsync(Trade trade)
+        {
+            try
+            {
+                _context.Trades.Update(trade);
+                await _context.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error updating trade {trade.Id}");
+            }
+        }
+
+        public async Task DeleteTradeAsync(Trade trade)
+        {
+            try
+            {
+                _context.Trades.Remove(trade);
+                await _context.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error deleting trade {trade.Id}");
+            }
+        }
     }
 }
