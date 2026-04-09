@@ -17,6 +17,13 @@ namespace KrishAgent.Models
         public string Action { get; set; } = string.Empty;
     }
 
+    public class AiAnalysisResponse
+    {
+        public string Source { get; set; } = string.Empty;
+        public string Warning { get; set; } = string.Empty;
+        public List<AiAnalysisItem> Items { get; set; } = [];
+    }
+
     public class AnalysisResultItem
     {
         public string Symbol { get; set; } = string.Empty;

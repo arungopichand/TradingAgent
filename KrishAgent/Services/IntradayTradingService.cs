@@ -9,26 +9,34 @@ namespace KrishAgent.Services
     {
         private static readonly TimeZoneInfo MarketTimeZone = ResolveMarketTimeZone();
 
+        private readonly DataService _dataService;
         private readonly MarketService _marketService;
         private readonly IndicatorService _indicatorService;
+        private readonly LiveMarketStreamService _liveMarketStreamService;
         private readonly TradingOptions _tradingOptions;
         private readonly ILogger<IntradayTradingService> _logger;
 
         public IntradayTradingService(
+            DataService dataService,
             MarketService marketService,
             IndicatorService indicatorService,
+            LiveMarketStreamService liveMarketStreamService,
             IOptions<TradingOptions> tradingOptions,
             ILogger<IntradayTradingService> logger)
         {
+            _dataService = dataService;
             _marketService = marketService;
             _indicatorService = indicatorService;
+            _liveMarketStreamService = liveMarketStreamService;
             _tradingOptions = tradingOptions.Value;
             _logger = logger;
         }
 
         public async Task<IntradayTradingBoard> GetBoardAsync(CancellationToken cancellationToken = default)
         {
-            var symbols = NormalizeSymbols(_tradingOptions.DayTradingSymbols);
+            var symbols = NormalizeSymbols(await _dataService.GetWatchlistSymbolsAsync(
+                WatchlistTypes.DayTrading,
+                _tradingOptions.DayTradingSymbols));
             var pickCount = Math.Clamp(_tradingOptions.DayTradingPickCount, 1, 10);
 
             var tasks = symbols.Select(symbol => BuildIdeaSafeAsync(symbol, cancellationToken));
@@ -39,13 +47,21 @@ namespace KrishAgent.Services
 
             if (ideas.Count == 0)
             {
-                throw new InvalidOperationException("No intraday setups were generated from the live market feed.");
+                return new IntradayTradingBoard
+                {
+                    GeneratedAtUtc = DateTime.UtcNow,
+                    Timeframe = "5-minute setups with a 1-minute price check",
+                    MarketStatus = BuildEmptyBoardStatus("intraday"),
+                    BeginnerNote =
+                        "Buy ideas are long trades. Sell ideas are short trades. If you are new, keep position sizes small, wait for the entry price, and skip any short setup you do not fully understand.",
+                    Picks = []
+                };
             }
 
             var picks = SelectTopPicks(ideas, pickCount);
-            var newestBar = picks.Max(pick => pick.LastUpdatedUtc);
-            var marketStatus = DateTime.UtcNow - newestBar > TimeSpan.FromMinutes(20)
-                ? "Latest bars are older than 20 minutes, so the market may be closed or the feed may be delayed."
+            var newestUpdate = picks.Max(pick => pick.LastUpdatedUtc);
+            var marketStatus = DateTime.UtcNow - newestUpdate > TimeSpan.FromMinutes(2)
+                ? "Live updates are more than 2 minutes old, so the market may be closed or the stream may be reconnecting."
                 : "Live market feed is active. Refresh often and wait for the entry price before acting.";
 
             return new IntradayTradingBoard
@@ -78,19 +94,18 @@ namespace KrishAgent.Services
 
         private async Task<IntradayTradeIdea> BuildIdeaAsync(string symbol, CancellationToken cancellationToken)
         {
-            var fiveMinuteJson = await _marketService.GetMarketData(symbol, "5Min", 78, 2, cancellationToken);
-            var oneMinuteJson = await _marketService.GetMarketData(symbol, "1Min", 20, 1, cancellationToken);
+            var snapshot = await GetSnapshotAsync(symbol, cancellationToken);
+            var fiveMinuteQuotes = GetLatestSessionQuotes(snapshot.FiveMinuteQuotes);
+            var oneMinuteQuotes = GetLatestSessionQuotes(snapshot.OneMinuteQuotes);
+            var minimumBarCount = GetMinimumBarCount();
 
-            var fiveMinuteQuotes = GetLatestSessionQuotes(_indicatorService.ConvertAlpacaJsonToQuotes(fiveMinuteJson));
-            var oneMinuteQuotes = GetLatestSessionQuotes(_indicatorService.ConvertAlpacaJsonToQuotes(oneMinuteJson));
-
-            if (fiveMinuteQuotes.Count < 12)
+            if (fiveMinuteQuotes.Count < minimumBarCount)
             {
-                throw new InvalidOperationException($"Not enough intraday data returned for {symbol}");
+                throw new InvalidOperationException($"Not enough intraday data returned for {symbol}. Need at least {minimumBarCount} five-minute bars but only received {fiveMinuteQuotes.Count}.");
             }
 
             var currentQuote = oneMinuteQuotes.LastOrDefault() ?? fiveMinuteQuotes.Last();
-            var currentPrice = currentQuote.Close;
+            var currentPrice = snapshot.CurrentPrice ?? currentQuote.Close;
             var openPrice = fiveMinuteQuotes.First().Open;
             var momentumBars = Math.Min(3, fiveMinuteQuotes.Count - 1);
             var momentumBase = fiveMinuteQuotes[^ (momentumBars + 1)].Close;
@@ -146,7 +161,7 @@ namespace KrishAgent.Services
                         $"Book some profit near ${targetPrice1:F2}. Exit the rest near ${targetPrice2:F2} or get out immediately if price falls below ${stopLoss:F2}.",
                     BeginnerTip =
                         "Wait for the breakout to happen first. If the stock never reaches entry, do nothing and move on.",
-                    LastUpdatedUtc = currentQuote.Date
+                    LastUpdatedUtc = snapshot.CurrentPriceTimestampUtc ?? currentQuote.Date
                 };
             }
 
@@ -180,7 +195,31 @@ namespace KrishAgent.Services
                     $"Cover some shares near ${shortTarget1:F2}. Exit the rest near ${shortTarget2:F2} or cover immediately if price rises above ${shortStop:F2}.",
                 BeginnerTip =
                     "Short selling is advanced. If your account does not support it or you are unsure, do not take this setup.",
-                LastUpdatedUtc = currentQuote.Date
+                LastUpdatedUtc = snapshot.CurrentPriceTimestampUtc ?? currentQuote.Date
+            };
+        }
+
+        private async Task<LiveMarketSnapshot> GetSnapshotAsync(string symbol, CancellationToken cancellationToken)
+        {
+            if (_liveMarketStreamService.TryGetSnapshot(symbol, out var liveSnapshot) && liveSnapshot is not null)
+            {
+                return liveSnapshot;
+            }
+
+            var fiveMinuteJson = await _marketService.GetMarketData(symbol, "5Min", 78, 2, cancellationToken);
+            var oneMinuteJson = await _marketService.GetMarketData(symbol, "1Min", 120, 1, cancellationToken);
+
+            var fiveMinuteQuotes = _indicatorService.ConvertAlpacaJsonToQuotes(fiveMinuteJson);
+            var oneMinuteQuotes = _indicatorService.ConvertAlpacaJsonToQuotes(oneMinuteJson);
+            var currentQuote = oneMinuteQuotes.LastOrDefault() ?? fiveMinuteQuotes.LastOrDefault();
+
+            return new LiveMarketSnapshot
+            {
+                Symbol = symbol,
+                FiveMinuteQuotes = fiveMinuteQuotes,
+                OneMinuteQuotes = oneMinuteQuotes,
+                CurrentPrice = currentQuote?.Close,
+                CurrentPriceTimestampUtc = currentQuote?.Date
             };
         }
 
@@ -358,6 +397,24 @@ namespace KrishAgent.Services
         private static decimal RoundMetric(decimal value)
         {
             return decimal.Round(value, 2, MidpointRounding.AwayFromZero);
+        }
+
+        private static int GetMinimumBarCount()
+        {
+            return IsEarlySession() ? 8 : 12;
+        }
+
+        private static string BuildEmptyBoardStatus(string scannerName)
+        {
+            return IsEarlySession()
+                ? $"Live market data is coming in, but the {scannerName} scanner is still gathering enough early-session candles to rank clean setups."
+                : $"Live market data is active, but no {scannerName} setups match the current scanner rules right now.";
+        }
+
+        private static bool IsEarlySession()
+        {
+            var easternNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, MarketTimeZone).TimeOfDay;
+            return easternNow >= new TimeSpan(9, 30, 0) && easternNow < new TimeSpan(10, 30, 0);
         }
 
         private static TimeZoneInfo ResolveMarketTimeZone()

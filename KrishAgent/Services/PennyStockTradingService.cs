@@ -9,26 +9,34 @@ namespace KrishAgent.Services
     {
         private static readonly TimeZoneInfo MarketTimeZone = ResolveMarketTimeZone();
 
+        private readonly DataService _dataService;
         private readonly MarketService _marketService;
         private readonly IndicatorService _indicatorService;
+        private readonly LiveMarketStreamService _liveMarketStreamService;
         private readonly TradingOptions _tradingOptions;
         private readonly ILogger<PennyStockTradingService> _logger;
 
         public PennyStockTradingService(
+            DataService dataService,
             MarketService marketService,
             IndicatorService indicatorService,
+            LiveMarketStreamService liveMarketStreamService,
             IOptions<TradingOptions> tradingOptions,
             ILogger<PennyStockTradingService> logger)
         {
+            _dataService = dataService;
             _marketService = marketService;
             _indicatorService = indicatorService;
+            _liveMarketStreamService = liveMarketStreamService;
             _tradingOptions = tradingOptions.Value;
             _logger = logger;
         }
 
         public async Task<IntradayTradingBoard> GetBoardAsync(CancellationToken cancellationToken = default)
         {
-            var symbols = NormalizeSymbols(_tradingOptions.PennyStockSymbols);
+            var symbols = NormalizeSymbols(await _dataService.GetWatchlistSymbolsAsync(
+                WatchlistTypes.PennyStock,
+                _tradingOptions.PennyStockSymbols));
             var pickCount = Math.Clamp(_tradingOptions.PennyStockPickCount, 1, 10);
             var maxPrice = _tradingOptions.PennyStockMaxPrice <= 0 ? 10m : _tradingOptions.PennyStockMaxPrice;
 
@@ -41,13 +49,21 @@ namespace KrishAgent.Services
 
             if (ideas.Count == 0)
             {
-                throw new InvalidOperationException($"No penny-stock setups were found below ${maxPrice:F2} from the live market feed.");
+                return new IntradayTradingBoard
+                {
+                    GeneratedAtUtc = DateTime.UtcNow,
+                    Timeframe = "5-minute penny-stock momentum setups with a 1-minute price check",
+                    MarketStatus = BuildEmptyBoardStatus(maxPrice),
+                    BeginnerNote =
+                        $"This scanner only looks for low-priced stocks under ${maxPrice:F2}. Penny stocks are highly speculative, so use small position sizes and risk only money you can afford to lose.",
+                    Picks = []
+                };
             }
 
             var picks = ideas.Take(pickCount).ToList();
-            var newestBar = picks.Max(pick => pick.LastUpdatedUtc);
-            var marketStatus = DateTime.UtcNow - newestBar > TimeSpan.FromMinutes(20)
-                ? "Latest bars are older than 20 minutes, so the market may be closed or the feed may be delayed."
+            var newestUpdate = picks.Max(pick => pick.LastUpdatedUtc);
+            var marketStatus = DateTime.UtcNow - newestUpdate > TimeSpan.FromMinutes(2)
+                ? "Live updates are more than 2 minutes old, so the market may be closed or the stream may be reconnecting."
                 : "Live market feed is active. These setups are volatile and can move very quickly.";
 
             return new IntradayTradingBoard
@@ -80,19 +96,18 @@ namespace KrishAgent.Services
 
         private async Task<IntradayTradeIdea?> BuildIdeaAsync(string symbol, decimal maxPrice, CancellationToken cancellationToken)
         {
-            var fiveMinuteJson = await _marketService.GetMarketData(symbol, "5Min", 78, 2, cancellationToken);
-            var oneMinuteJson = await _marketService.GetMarketData(symbol, "1Min", 20, 1, cancellationToken);
+            var snapshot = await GetSnapshotAsync(symbol, cancellationToken);
+            var fiveMinuteQuotes = GetLatestSessionQuotes(snapshot.FiveMinuteQuotes);
+            var oneMinuteQuotes = GetLatestSessionQuotes(snapshot.OneMinuteQuotes);
+            var minimumBarCount = GetMinimumBarCount();
 
-            var fiveMinuteQuotes = GetLatestSessionQuotes(_indicatorService.ConvertAlpacaJsonToQuotes(fiveMinuteJson));
-            var oneMinuteQuotes = GetLatestSessionQuotes(_indicatorService.ConvertAlpacaJsonToQuotes(oneMinuteJson));
-
-            if (fiveMinuteQuotes.Count < 12)
+            if (fiveMinuteQuotes.Count < minimumBarCount)
             {
-                throw new InvalidOperationException($"Not enough intraday data returned for {symbol}");
+                throw new InvalidOperationException($"Not enough intraday data returned for {symbol}. Need at least {minimumBarCount} five-minute bars but only received {fiveMinuteQuotes.Count}.");
             }
 
             var currentQuote = oneMinuteQuotes.LastOrDefault() ?? fiveMinuteQuotes.Last();
-            var currentPrice = currentQuote.Close;
+            var currentPrice = snapshot.CurrentPrice ?? currentQuote.Close;
             if (currentPrice <= 0 || currentPrice > maxPrice)
             {
                 return null;
@@ -104,7 +119,8 @@ namespace KrishAgent.Services
             var momentumBase = fiveMinuteQuotes[^ (momentumBars + 1)].Close;
             var momentumPercent = PercentageChange(currentPrice, momentumBase);
             var dayChangePercent = PercentageChange(currentPrice, openPrice);
-            var rsi = GetLatestRsi(_indicatorService.CalculateRsiSeries(fiveMinuteQuotes, 6));
+            var rsiLookback = Math.Clamp(Math.Min(6, fiveMinuteQuotes.Count - 1), 2, 6);
+            var rsi = GetLatestRsi(_indicatorService.CalculateRsiSeries(fiveMinuteQuotes, rsiLookback));
             var sma8 = AverageClose(fiveMinuteQuotes, 8);
             var sma20 = AverageClose(fiveMinuteQuotes, 20);
             var recentQuotes = TakeLast(fiveMinuteQuotes, Math.Min(12, fiveMinuteQuotes.Count));
@@ -117,7 +133,7 @@ namespace KrishAgent.Services
             var volumeSpike = averageVolume == 0 ? 1m : latestBarVolume / averageVolume;
 
             var score = ScorePennyIdea(currentPrice, sma8, sma20, momentumPercent, dayChangePercent, rsi, recentHigh, averageRange, volumeSpike, sessionVolume);
-            if (score < 5 || rsi < 45m || momentumPercent <= 0 || dayChangePercent <= 0)
+            if (score < GetMinimumScore() || rsi < GetMinimumRsi() || momentumPercent <= 0 || dayChangePercent <= 0)
             {
                 return null;
             }
@@ -155,7 +171,31 @@ namespace KrishAgent.Services
                     $"Take partial profit near ${targetPrice1:F2}. Exit the rest near ${targetPrice2:F2}, or sell immediately if the stock loses ${stopLoss:F2}.",
                 BeginnerTip =
                     "Never average down on a penny stock. If the stop loss gets hit, accept the small loss and wait for the next setup.",
-                LastUpdatedUtc = currentQuote.Date
+                LastUpdatedUtc = snapshot.CurrentPriceTimestampUtc ?? currentQuote.Date
+            };
+        }
+
+        private async Task<LiveMarketSnapshot> GetSnapshotAsync(string symbol, CancellationToken cancellationToken)
+        {
+            if (_liveMarketStreamService.TryGetSnapshot(symbol, out var liveSnapshot) && liveSnapshot is not null)
+            {
+                return liveSnapshot;
+            }
+
+            var fiveMinuteJson = await _marketService.GetMarketData(symbol, "5Min", 78, 2, cancellationToken);
+            var oneMinuteJson = await _marketService.GetMarketData(symbol, "1Min", 120, 1, cancellationToken);
+
+            var fiveMinuteQuotes = _indicatorService.ConvertAlpacaJsonToQuotes(fiveMinuteJson);
+            var oneMinuteQuotes = _indicatorService.ConvertAlpacaJsonToQuotes(oneMinuteJson);
+            var currentQuote = oneMinuteQuotes.LastOrDefault() ?? fiveMinuteQuotes.LastOrDefault();
+
+            return new LiveMarketSnapshot
+            {
+                Symbol = symbol,
+                FiveMinuteQuotes = fiveMinuteQuotes,
+                OneMinuteQuotes = oneMinuteQuotes,
+                CurrentPrice = currentQuote?.Close,
+                CurrentPriceTimestampUtc = currentQuote?.Date
             };
         }
 
@@ -174,12 +214,12 @@ namespace KrishAgent.Services
             var score = 0;
             if (currentPrice > sma8) score++;
             if (sma8 >= sma20) score++;
-            if (momentumPercent > 0.45m) score++;
-            if (dayChangePercent > 1.0m) score++;
-            if (rsi >= 52m && rsi <= 82m) score++;
+            if (momentumPercent > GetMinimumMomentumPercent()) score++;
+            if (dayChangePercent > GetMinimumDayChangePercent()) score++;
+            if (rsi >= GetMinimumRsi() && rsi <= 82m) score++;
             if (currentPrice >= recentHigh - (averageRange * 0.40m)) score++;
-            if (volumeSpike >= 1.15m) score++;
-            if (sessionVolume >= 30000) score++;
+            if (volumeSpike >= GetMinimumVolumeSpike()) score++;
+            if (sessionVolume >= GetMinimumSessionVolume()) score++;
             return score;
         }
 
@@ -280,6 +320,54 @@ namespace KrishAgent.Services
         private static decimal RoundMetric(decimal value)
         {
             return decimal.Round(value, 2, MidpointRounding.AwayFromZero);
+        }
+
+        private static int GetMinimumBarCount()
+        {
+            return IsEarlySession() ? 5 : 12;
+        }
+
+        private static int GetMinimumScore()
+        {
+            return IsEarlySession() ? 4 : 5;
+        }
+
+        private static decimal GetMinimumMomentumPercent()
+        {
+            return IsEarlySession() ? 0.20m : 0.45m;
+        }
+
+        private static decimal GetMinimumDayChangePercent()
+        {
+            return IsEarlySession() ? 0.40m : 1.0m;
+        }
+
+        private static decimal GetMinimumRsi()
+        {
+            return IsEarlySession() ? 48m : 52m;
+        }
+
+        private static decimal GetMinimumVolumeSpike()
+        {
+            return IsEarlySession() ? 1.0m : 1.15m;
+        }
+
+        private static long GetMinimumSessionVolume()
+        {
+            return IsEarlySession() ? 10000 : 30000;
+        }
+
+        private static string BuildEmptyBoardStatus(decimal maxPrice)
+        {
+            return IsEarlySession()
+                ? $"Live market data is coming in, but the penny scanner is still gathering enough early-session candles to rank low-priced names below ${maxPrice:F2}."
+                : $"Live market data is active, but no penny-stock setups below ${maxPrice:F2} match the scanner rules right now.";
+        }
+
+        private static bool IsEarlySession()
+        {
+            var easternNow = TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, MarketTimeZone).TimeOfDay;
+            return easternNow >= new TimeSpan(9, 30, 0) && easternNow < new TimeSpan(10, 30, 0);
         }
 
         private static TimeZoneInfo ResolveMarketTimeZone()

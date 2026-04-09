@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: krish-agent-api
+    runtime: docker
+    rootDir: KrishAgent
+    dockerfilePath: ./Dockerfile
+    plan: free
+    autoDeploy: true
+    healthCheckPath: /api/test
+    envVars:
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Production
+      - key: DATABASE_URL
+        sync: false
+      - key: ConnectionStrings__DefaultConnection
+        sync: false
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+      - key: Alpaca__ApiKey
+        sync: false
+      - key: Alpaca__SecretKey
+        sync: false
+      - key: Alpaca__Feed
+        value: iex
+      - key: OpenAI__ApiKey
+        sync: false
+      - key: OpenAI__Model
+        value: gpt-5-mini
