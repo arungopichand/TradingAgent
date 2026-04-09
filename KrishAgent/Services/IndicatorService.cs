@@ -16,9 +16,10 @@ namespace KrishAgent.Services
             try
             {
                 var response = JsonSerializer.Deserialize<Models.AlpacaBarsResponse>(json, JsonOptions);
-                if (response == null || response.Bars.Count == 0)
+                if (response?.Bars == null || response.Bars.Count == 0)
                 {
-                    throw new InvalidOperationException("Empty or invalid response from Alpaca API");
+                    var symbol = response?.Symbol ?? "unknown symbol";
+                    throw new InvalidOperationException($"No bars returned from Alpaca API for {symbol}");
                 }
                 
                 return response.Bars

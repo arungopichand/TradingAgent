@@ -161,19 +161,25 @@ namespace KrishAgent.Services
                                     shouldTrigger = currentPrice < alert.Threshold;
                                     break;
                                 case "rsi_above":
+                                {
                                     var rsiPrices = await dataService.GetStockPricesAsync(alert.Symbol, limit: 30);
-                                    if (rsiPrices.Any() && rsiPrices.First().RSI.HasValue)
+                                    var latest = rsiPrices.FirstOrDefault();
+                                    if (latest?.RSI is decimal lastRsi)
                                     {
-                                        shouldTrigger = rsiPrices.First().RSI.Value > alert.Threshold;
+                                        shouldTrigger = lastRsi > alert.Threshold;
                                     }
                                     break;
+                                }
                                 case "rsi_below":
+                                {
                                     var rsiPricesBelow = await dataService.GetStockPricesAsync(alert.Symbol, limit: 30);
-                                    if (rsiPricesBelow.Any() && rsiPricesBelow.First().RSI.HasValue)
+                                    var latest = rsiPricesBelow.FirstOrDefault();
+                                    if (latest?.RSI is decimal lastRsi)
                                     {
-                                        shouldTrigger = rsiPricesBelow.First().RSI.Value < alert.Threshold;
+                                        shouldTrigger = lastRsi < alert.Threshold;
                                     }
                                     break;
+                                }
                             }
 
                             if (shouldTrigger)
