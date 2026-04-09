@@ -8,6 +8,7 @@ using Microsoft.Extensions.Options;
 using System.Text;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Storage;
+using Npgsql;
 
 var builder = WebApplication.CreateBuilder(args);
 ConfigureHostingPort(builder);
@@ -304,11 +305,14 @@ static string ConvertDatabaseUrl(string databaseUrl)
 
 static async Task<bool> ApplicationTablesExistAsync(TradingContext dbContext)
 {
-    await using var connection = dbContext.Database.GetDbConnection();
-    if (connection.State != System.Data.ConnectionState.Open)
+    var connectionString = dbContext.Database.GetConnectionString();
+    if (string.IsNullOrWhiteSpace(connectionString))
     {
-        await connection.OpenAsync();
+        throw new InvalidOperationException("No database connection string is configured.");
     }
+
+    await using var connection = new NpgsqlConnection(connectionString);
+    await connection.OpenAsync();
 
     await using var command = connection.CreateCommand();
     command.CommandText = """
