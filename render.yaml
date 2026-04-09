@@ -2,7 +2,7 @@ services:
   - type: web
     name: krish-agent-api
     runtime: docker
-    branch: version-4
+    branch: main
     rootDir: KrishAgent
     dockerfilePath: ./KrishAgent/Dockerfile
     dockerContext: ./KrishAgent
