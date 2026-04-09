@@ -51,6 +51,145 @@ namespace KrishAgent.Controllers
             return await PerformAnalysis(request.Symbols.ToArray());
         }
 
+        [HttpGet("stock/{symbol}/history")]
+        public async Task<IActionResult> GetStockHistory(string symbol, [FromQuery] int limit = 50, [FromQuery] string? startDate = null, [FromQuery] string? endDate = null)
+        {
+            if (string.IsNullOrWhiteSpace(symbol))
+            {
+                return BadRequest(new { error = "Symbol is required" });
+            }
+
+            DateTime? start = null;
+            DateTime? end = null;
+            DateTime parsedStart;
+            DateTime parsedEnd;
+
+            if (!string.IsNullOrWhiteSpace(startDate))
+            {
+                if (!DateTime.TryParse(startDate, out parsedStart))
+                {
+                    return BadRequest(new { error = "Invalid startDate format" });
+                }
+
+                start = parsedStart;
+            }
+
+            if (!string.IsNullOrWhiteSpace(endDate))
+            {
+                if (!DateTime.TryParse(endDate, out parsedEnd))
+                {
+                    return BadRequest(new { error = "Invalid endDate format" });
+                }
+
+                end = parsedEnd;
+            }
+
+            var prices = await _dataService.GetStockPricesAsync(symbol.ToUpperInvariant(), start, end, limit);
+            return Ok(prices);
+        }
+
+        [HttpGet("analysis/history/{symbol}")]
+        public async Task<IActionResult> GetAnalysisHistory(string symbol, [FromQuery] int limit = 50, [FromQuery] string? startDate = null)
+        {
+            if (string.IsNullOrWhiteSpace(symbol))
+            {
+                return BadRequest(new { error = "Symbol is required" });
+            }
+
+            DateTime? start = null;
+            if (!string.IsNullOrWhiteSpace(startDate))
+            {
+                if (!DateTime.TryParse(startDate, out var parsedStart))
+                {
+                    return BadRequest(new { error = "Invalid startDate format" });
+                }
+
+                start = parsedStart;
+            }
+
+            var history = await _dataService.GetAnalysisHistoryAsync(symbol.ToUpperInvariant(), start, limit);
+            return Ok(history);
+        }
+
+        [HttpGet("alerts")]
+        public async Task<IActionResult> GetAlerts()
+        {
+            var alerts = await _dataService.GetAllAlertsAsync();
+            return Ok(alerts);
+        }
+
+        [HttpGet("alerts/{id}")]
+        public async Task<IActionResult> GetAlert(int id)
+        {
+            var alert = await _dataService.GetAlertByIdAsync(id);
+            if (alert == null)
+            {
+                return NotFound(new { error = "Alert not found" });
+            }
+
+            return Ok(alert);
+        }
+
+        [HttpPost("alerts")]
+        public async Task<IActionResult> CreateAlert([FromBody] AlertRequest request)
+        {
+            if (request == null || string.IsNullOrWhiteSpace(request.Symbol) || string.IsNullOrWhiteSpace(request.AlertType))
+            {
+                return BadRequest(new { error = "Symbol and AlertType are required" });
+            }
+
+            var alert = new KrishAgent.Data.Alert
+            {
+                Symbol = request.Symbol.Trim().ToUpperInvariant(),
+                AlertType = request.AlertType.Trim().ToLowerInvariant(),
+                Threshold = request.Threshold,
+                Condition = request.Condition?.Trim() ?? string.Empty,
+                IsActive = request.IsActive,
+                ExpiresAt = request.ExpiresAt
+            };
+
+            await _dataService.CreateAlertAsync(alert);
+            return CreatedAtAction(nameof(GetAlert), new { id = alert.Id }, alert);
+        }
+
+        [HttpPut("alerts/{id}")]
+        public async Task<IActionResult> UpdateAlert(int id, [FromBody] AlertRequest request)
+        {
+            if (request == null || string.IsNullOrWhiteSpace(request.Symbol) || string.IsNullOrWhiteSpace(request.AlertType))
+            {
+                return BadRequest(new { error = "Symbol and AlertType are required" });
+            }
+
+            var existing = await _dataService.GetAlertByIdAsync(id);
+            if (existing == null)
+            {
+                return NotFound(new { error = "Alert not found" });
+            }
+
+            existing.Symbol = request.Symbol.Trim().ToUpperInvariant();
+            existing.AlertType = request.AlertType.Trim().ToLowerInvariant();
+            existing.Threshold = request.Threshold;
+            existing.Condition = request.Condition?.Trim() ?? string.Empty;
+            existing.IsActive = request.IsActive;
+            existing.ExpiresAt = request.ExpiresAt;
+
+            await _dataService.UpdateAlertAsync(existing);
+            return Ok(existing);
+        }
+
+        [HttpDelete("alerts/{id}")]
+        public async Task<IActionResult> DeleteAlert(int id)
+        {
+            var existing = await _dataService.GetAlertByIdAsync(id);
+            if (existing == null)
+            {
+                return NotFound(new { error = "Alert not found" });
+            }
+
+            await _dataService.DeleteAlertAsync(existing);
+            return NoContent();
+        }
+
         private async Task<IActionResult> PerformAnalysis(string[] symbols)
         {
             var normalizedSymbols = symbols

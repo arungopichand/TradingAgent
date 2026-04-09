@@ -144,5 +144,59 @@ namespace KrishAgent.Services
                 _logger.LogError(ex, $"Error updating alert {alert.Id}");
             }
         }
+
+        public async Task<List<Alert>> GetAllAlertsAsync()
+        {
+            try
+            {
+                return await _context.Alerts
+                    .OrderByDescending(a => a.CreatedAt)
+                    .ToListAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error retrieving alerts");
+                return new List<Alert>();
+            }
+        }
+
+        public async Task<Alert?> GetAlertByIdAsync(int id)
+        {
+            try
+            {
+                return await _context.Alerts.FindAsync(id);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error retrieving alert {id}");
+                return null;
+            }
+        }
+
+        public async Task CreateAlertAsync(Alert alert)
+        {
+            try
+            {
+                _context.Alerts.Add(alert);
+                await _context.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error creating alert");
+            }
+        }
+
+        public async Task DeleteAlertAsync(Alert alert)
+        {
+            try
+            {
+                _context.Alerts.Remove(alert);
+                await _context.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error deleting alert {alert.Id}");
+            }
+        }
     }
 }
