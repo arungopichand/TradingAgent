@@ -4,6 +4,8 @@ using KrishAgent.Services;
 using KrishAgent.Models;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
+using System.Text;
+using Skender.Stock.Indicators;
 
 namespace KrishAgent.Controllers
 {
@@ -11,10 +13,13 @@ namespace KrishAgent.Controllers
     [Route("api")]
     public class TradingController : ControllerBase
     {
+        private static readonly JsonSerializerOptions SseJsonOptions = new(JsonSerializerDefaults.Web);
+
         private readonly MarketService _marketService;
         private readonly IndicatorService _indicatorService;
         private readonly AIService _aiService;
         private readonly DataService _dataService;
+        private readonly LiveMarketStreamService _liveMarketStreamService;
         private readonly IntradayTradingService _intradayTradingService;
         private readonly PennyStockTradingService _pennyStockTradingService;
         private readonly TradingOptions _tradingOptions;
@@ -24,6 +29,7 @@ namespace KrishAgent.Controllers
             IndicatorService indicatorService,
             AIService aiService,
             DataService dataService,
+            LiveMarketStreamService liveMarketStreamService,
             IntradayTradingService intradayTradingService,
             PennyStockTradingService pennyStockTradingService,
             IOptions<TradingOptions> tradingOptions)
@@ -32,6 +38,7 @@ namespace KrishAgent.Controllers
             _indicatorService = indicatorService;
             _aiService = aiService;
             _dataService = dataService;
+            _liveMarketStreamService = liveMarketStreamService;
             _intradayTradingService = intradayTradingService;
             _pennyStockTradingService = pennyStockTradingService;
             _tradingOptions = tradingOptions.Value;
@@ -46,7 +53,8 @@ namespace KrishAgent.Controllers
         [HttpGet("trade/analyze")]
         public async Task<IActionResult> Analyze()
         {
-            return await PerformAnalysis(_tradingOptions.AnalysisSymbols);
+            var symbols = await _dataService.GetWatchlistSymbolsAsync(WatchlistTypes.Analysis, _tradingOptions.AnalysisSymbols);
+            return await PerformAnalysis(symbols.ToArray());
         }
 
         [HttpPost("trade/analyze")]
@@ -91,6 +99,52 @@ namespace KrishAgent.Controllers
             {
                 return StatusCode(500, new { error = "Failed to load penny stock ideas", details = ex.Message });
             }
+        }
+
+        [HttpGet("stream/trade/intraday")]
+        public Task StreamIntradayTradingIdeas()
+        {
+            return StreamBoardAsync(cancellationToken => _intradayTradingService.GetBoardAsync(cancellationToken));
+        }
+
+        [HttpGet("stream/trade/penny-stocks")]
+        public Task StreamPennyStockIdeas()
+        {
+            return StreamBoardAsync(cancellationToken => _pennyStockTradingService.GetBoardAsync(cancellationToken));
+        }
+
+        [HttpGet("watchlists")]
+        public async Task<IActionResult> GetWatchlists([FromQuery] string? listType = null)
+        {
+            var entries = await _dataService.GetWatchlistEntriesAsync(listType);
+            return Ok(entries);
+        }
+
+        [HttpPost("watchlists")]
+        public async Task<IActionResult> CreateWatchlistEntry([FromBody] WatchlistEntryRequest request)
+        {
+            if (request == null || string.IsNullOrWhiteSpace(request.ListType) || string.IsNullOrWhiteSpace(request.Symbol))
+            {
+                return BadRequest(new { error = "ListType and Symbol are required" });
+            }
+
+            var entry = await _dataService.CreateWatchlistEntryAsync(request.ListType, request.Symbol);
+            _liveMarketStreamService.MarkSubscriptionsDirty();
+            return CreatedAtAction(nameof(GetWatchlists), new { listType = entry.ListType }, entry);
+        }
+
+        [HttpDelete("watchlists/{id}")]
+        public async Task<IActionResult> DeleteWatchlistEntry(int id)
+        {
+            var entry = await _dataService.GetWatchlistEntryByIdAsync(id);
+            if (entry == null)
+            {
+                return NotFound(new { error = "Watchlist entry not found" });
+            }
+
+            await _dataService.DeleteWatchlistEntryAsync(entry);
+            _liveMarketStreamService.MarkSubscriptionsDirty();
+            return NoContent();
         }
 
         [HttpGet("stock/{symbol}/history")]
@@ -427,30 +481,17 @@ namespace KrishAgent.Controllers
                 {
                     try
                     {
-                        var json = await _marketService.GetMarketData(symbol, cancellationToken);
-                        var quotes = _indicatorService.ConvertAlpacaJsonToQuotes(json);
-                        var rsi = _indicatorService.CalculateRsi(quotes);
-
-                        var trend = quotes.Count >= 2 && quotes[^1].Close > quotes[^2].Close ? "up" : "down";
-                        var lastQuote = quotes.Last();
-                        var currentPrice = lastQuote?.Close ?? 0;
-                        
-                        // Ensure price is not zero
-                        if (currentPrice == 0 && quotes.Count > 0)
-                        {
-                            currentPrice = quotes.LastOrDefault()?.Close ?? 0;
-                        }
-
-                        stockPayload.Add(new StockSnapshot
-                        {
-                            Symbol = symbol,
-                            Price = currentPrice,
-                            Rsi = rsi,
-                            Trend = trend
-                        });
+                        stockPayload.Add(await BuildStockSnapshotAsync(symbol, cancellationToken));
                     }
                     catch (Exception ex)
                     {
+                        var historicalSnapshot = await TryBuildHistoricalStockSnapshotAsync(symbol);
+                        if (historicalSnapshot is not null)
+                        {
+                            stockPayload.Add(historicalSnapshot);
+                            continue;
+                        }
+
                         return StatusCode(500, new { error = $"Failed to process {symbol}", details = ex.Message });
                     }
                 }
@@ -460,98 +501,60 @@ namespace KrishAgent.Controllers
                     return BadRequest(new { error = "No stock data collected" });
                 }
 
-                var inputJson = JsonSerializer.Serialize(stockPayload);
-                var aiContent = await _aiService.Analyze(inputJson, cancellationToken);
+                var aiResponse = await _aiService.Analyze(stockPayload, cancellationToken);
+                var stockLookup = stockPayload.ToDictionary(stock => stock.Symbol, StringComparer.OrdinalIgnoreCase);
+                var resultList = new List<AnalysisResultItem>();
 
-                try
+                foreach (var aiItem in aiResponse.Items)
                 {
-                    var aiArray = ParseAiAnalysis(aiContent);
-                    var stockLookup = stockPayload.ToDictionary(stock => stock.Symbol, StringComparer.OrdinalIgnoreCase);
-                    var resultList = new List<AnalysisResultItem>();
-
-                    foreach (var aiItem in aiArray)
+                    if (string.IsNullOrWhiteSpace(aiItem.Symbol) ||
+                        !stockLookup.TryGetValue(aiItem.Symbol, out var stockData))
                     {
-                        if (string.IsNullOrWhiteSpace(aiItem.Symbol) ||
-                            !stockLookup.TryGetValue(aiItem.Symbol, out var stockData))
-                        {
-                            continue;
-                        }
-
-                        resultList.Add(new AnalysisResultItem
-                        {
-                            Symbol = stockData.Symbol,
-                            Price = stockData.Price,
-                            Rsi = stockData.Rsi,
-                            Trend = NormalizeTrend(aiItem.Trend, stockData.Trend),
-                            Confidence = NormalizeConfidence(aiItem.Confidence),
-                            Reason = string.IsNullOrWhiteSpace(aiItem.Reason) ? "No reason provided." : aiItem.Reason.Trim(),
-                            Action = NormalizeAction(aiItem.Action)
-                        });
+                        continue;
                     }
 
-                    if (resultList.Count == 0)
+                    resultList.Add(new AnalysisResultItem
                     {
-                        return StatusCode(502, new { error = "AI response did not include any matching symbols" });
-                    }
-
-                    // Save analysis results to database
-                    foreach (var result in resultList)
-                    {
-                        var analysisHistory = new KrishAgent.Data.AnalysisHistory
-                        {
-                            Symbol = result.Symbol,
-                            Date = DateTime.UtcNow.Date,
-                            Price = result.Price,
-                            RSI = result.Rsi,
-                            Trend = result.Trend,
-                            Action = result.Action,
-                            Confidence = result.Confidence,
-                            Reason = result.Reason,
-                            AIModel = _aiService.ConfiguredModel
-                        };
-
-                        await _dataService.SaveAnalysisHistoryAsync(analysisHistory);
-                    }
-
-                    return Ok(resultList);
+                        Symbol = stockData.Symbol,
+                        Price = stockData.Price,
+                        Rsi = stockData.Rsi,
+                        Trend = NormalizeTrend(aiItem.Trend, stockData.Trend),
+                        Confidence = NormalizeConfidence(aiItem.Confidence),
+                        Reason = string.IsNullOrWhiteSpace(aiItem.Reason) ? "No reason provided." : aiItem.Reason.Trim(),
+                        Action = NormalizeAction(aiItem.Action)
+                    });
                 }
-                catch (Exception parseEx)
+
+                if (resultList.Count == 0)
                 {
-                    return StatusCode(500, new { error = "Failed to parse AI response", details = parseEx.Message });
+                    return StatusCode(502, new { error = "AI response did not include any matching symbols" });
                 }
+
+                // Save analysis results to database
+                foreach (var result in resultList)
+                {
+                    var analysisHistory = new KrishAgent.Data.AnalysisHistory
+                    {
+                        Symbol = result.Symbol,
+                        Date = DateTime.UtcNow.Date,
+                        Price = result.Price,
+                        RSI = result.Rsi,
+                        Trend = result.Trend,
+                        Action = result.Action,
+                        Confidence = result.Confidence,
+                        Reason = result.Reason,
+                        AIModel = aiResponse.Source
+                    };
+
+                    await _dataService.SaveAnalysisHistoryAsync(analysisHistory);
+                }
+
+                return Ok(resultList);
             }
             catch (Exception ex)
             {
                 return StatusCode(500, new { error = "Analysis failed", details = ex.Message });
             }
-        }
-
-        private static List<AiAnalysisItem> ParseAiAnalysis(string aiContent)
-        {
-            if (string.IsNullOrWhiteSpace(aiContent))
-            {
-                throw new InvalidOperationException("AI response was empty");
-            }
-
-            var content = aiContent.Trim();
-            if (content.StartsWith("```", StringComparison.Ordinal))
-            {
-                content = content.Replace("```json", "", StringComparison.OrdinalIgnoreCase)
-                                 .Replace("```", "", StringComparison.Ordinal)
-                                 .Trim();
-            }
-
-            var aiArray = JsonSerializer.Deserialize<List<AiAnalysisItem>>(content, new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true
-            });
-
-            if (aiArray == null || aiArray.Count == 0)
-            {
-                throw new InvalidOperationException("AI response did not contain any analysis items");
-            }
-
-            return aiArray;
         }
 
         private static string NormalizeAction(string? action)
@@ -579,6 +582,93 @@ namespace KrishAgent.Controllers
         {
             var rounded = decimal.Round(confidence, 0, MidpointRounding.AwayFromZero);
             return decimal.ToInt32(decimal.Clamp(rounded, 0, 100));
+        }
+
+        private async Task<StockSnapshot> BuildStockSnapshotAsync(string symbol, CancellationToken cancellationToken)
+        {
+            var json = await _marketService.GetMarketData(symbol, cancellationToken);
+            var quotes = _indicatorService.ConvertAlpacaJsonToQuotes(json);
+            return BuildStockSnapshot(symbol, quotes);
+        }
+
+        private async Task<StockSnapshot?> TryBuildHistoricalStockSnapshotAsync(string symbol)
+        {
+            var historicalPrices = await _dataService.GetStockPricesAsync(symbol, limit: 60);
+            var quotes = historicalPrices
+                .OrderBy(price => price.Date)
+                .Select(price => new Quote
+                {
+                    Date = price.Date,
+                    Open = price.Open,
+                    High = price.High,
+                    Low = price.Low,
+                    Close = price.Close,
+                    Volume = price.Volume
+                })
+                .ToList();
+
+            if (quotes.Count < 2)
+            {
+                return null;
+            }
+
+            return BuildStockSnapshot(symbol, quotes);
+        }
+
+        private StockSnapshot BuildStockSnapshot(string symbol, List<Quote> quotes)
+        {
+            if (quotes.Count == 0)
+            {
+                throw new InvalidOperationException($"No market data was available for {symbol}.");
+            }
+
+            var rsi = _indicatorService.CalculateRsi(quotes);
+            var trend = quotes.Count >= 2 && quotes[^1].Close > quotes[^2].Close ? "up" : "down";
+            var currentPrice = quotes.Last().Close;
+
+            return new StockSnapshot
+            {
+                Symbol = symbol,
+                Price = currentPrice,
+                Rsi = rsi,
+                Trend = trend
+            };
+        }
+
+        private async Task StreamBoardAsync(Func<CancellationToken, Task<IntradayTradingBoard>> boardFactory)
+        {
+            var cancellationToken = HttpContext?.RequestAborted ?? CancellationToken.None;
+
+            Response.Headers.Append("Cache-Control", "no-cache");
+            Response.Headers.Append("Connection", "keep-alive");
+            Response.Headers.Append("X-Accel-Buffering", "no");
+            Response.ContentType = "text/event-stream";
+
+            string? previousPayload = null;
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                var board = await boardFactory(cancellationToken);
+                var payload = JsonSerializer.Serialize(board, SseJsonOptions);
+
+                if (!string.Equals(payload, previousPayload, StringComparison.Ordinal))
+                {
+                    previousPayload = payload;
+                    await Response.WriteAsync($"data: {payload}\n\n", cancellationToken);
+                    await Response.Body.FlushAsync(cancellationToken);
+                }
+                else
+                {
+                    await Response.WriteAsync($": keepalive {DateTime.UtcNow:O}\n\n", cancellationToken);
+                    await Response.Body.FlushAsync(cancellationToken);
+                }
+
+                if (!await timer.WaitForNextTickAsync(cancellationToken))
+                {
+                    break;
+                }
+            }
         }
     }
 }

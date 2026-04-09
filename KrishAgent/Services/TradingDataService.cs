@@ -1,5 +1,6 @@
 using KrishAgent.Configuration;
 using KrishAgent.Data;
+using KrishAgent.Models;
 using Microsoft.Extensions.Options;
 
 namespace KrishAgent.Services
@@ -8,7 +9,7 @@ namespace KrishAgent.Services
     {
         private readonly IServiceScopeFactory _scopeFactory;
         private readonly ILogger<TradingDataService> _logger;
-        private readonly string[] _backgroundSymbols;
+        private readonly string[] _defaultBackgroundSymbols;
         private readonly TimeSpan _dataFetchInterval;
         private readonly TimeSpan _alertCheckInterval;
         private readonly bool _runInitialBackgroundFetch;
@@ -22,7 +23,7 @@ namespace KrishAgent.Services
             _logger = logger;
 
             var options = tradingOptions.Value;
-            _backgroundSymbols = NormalizeSymbols(options.BackgroundSymbols);
+            _defaultBackgroundSymbols = NormalizeSymbols(options.BackgroundSymbols);
             _dataFetchInterval = TimeSpan.FromMinutes(Math.Max(1, options.DataFetchIntervalMinutes));
             _alertCheckInterval = TimeSpan.FromMinutes(Math.Max(1, options.AlertCheckIntervalMinutes));
             _runInitialBackgroundFetch = options.RunInitialBackgroundFetch;
@@ -31,8 +32,8 @@ namespace KrishAgent.Services
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             _logger.LogInformation(
-                "TradingDataService started. Tracking {SymbolCount} symbols. Market sync every {MarketSyncMinutes} minutes. Alert check every {AlertMinutes} minutes.",
-                _backgroundSymbols.Length,
+                "TradingDataService started. Default background watchlist has {SymbolCount} symbols. Market sync every {MarketSyncMinutes} minutes. Alert check every {AlertMinutes} minutes.",
+                _defaultBackgroundSymbols.Length,
                 _dataFetchInterval.TotalMinutes,
                 _alertCheckInterval.TotalMinutes);
 
@@ -101,8 +102,11 @@ namespace KrishAgent.Services
             var marketService = scope.ServiceProvider.GetRequiredService<MarketService>();
             var indicatorService = scope.ServiceProvider.GetRequiredService<IndicatorService>();
             var dataService = scope.ServiceProvider.GetRequiredService<DataService>();
+            var backgroundSymbols = NormalizeSymbols(await dataService.GetWatchlistSymbolsAsync(
+                WatchlistTypes.Background,
+                _defaultBackgroundSymbols));
 
-            foreach (var symbol in _backgroundSymbols)
+            foreach (var symbol in backgroundSymbols)
             {
                 stoppingToken.ThrowIfCancellationRequested();
 

@@ -12,6 +12,7 @@ namespace KrishAgent.Data
         public DbSet<Alert> Alerts { get; set; }
         public DbSet<PortfolioPosition> PortfolioPositions { get; set; }
         public DbSet<Trade> Trades { get; set; }
+        public DbSet<WatchlistEntry> WatchlistEntries { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -29,6 +30,14 @@ namespace KrishAgent.Data
             // Alert indexes
             modelBuilder.Entity<Alert>()
                 .HasIndex(a => new { a.Symbol, a.IsActive });
+
+            // Watchlist indexes
+            modelBuilder.Entity<WatchlistEntry>()
+                .HasIndex(w => new { w.ListType, w.Symbol })
+                .IsUnique();
+
+            modelBuilder.Entity<WatchlistEntry>()
+                .HasIndex(w => new { w.ListType, w.SortOrder });
         }
     }
 
@@ -207,5 +216,29 @@ namespace KrishAgent.Data
         public string Notes { get; set; } = string.Empty;
 
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    }
+
+    public class WatchlistEntry
+    {
+        [Key]
+        public int Id { get; set; }
+
+        [Required]
+        [MaxLength(40)]
+        public string ListType { get; set; } = string.Empty;
+
+        [Required]
+        [MaxLength(10)]
+        public string Symbol { get; set; } = string.Empty;
+
+        [Required]
+        public int SortOrder { get; set; }
+
+        [Required]
+        public bool IsActive { get; set; } = true;
+
+        public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+        public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     }
 }

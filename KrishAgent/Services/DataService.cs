@@ -1,4 +1,6 @@
+using KrishAgent.Configuration;
 using KrishAgent.Data;
+using KrishAgent.Models;
 using Microsoft.EntityFrameworkCore;
 
 namespace KrishAgent.Services
@@ -70,6 +72,156 @@ namespace KrishAgent.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error saving analysis history to database");
+                throw;
+            }
+        }
+
+        public async Task EnsureWatchlistsSeededAsync(TradingOptions tradingOptions)
+        {
+            try
+            {
+                if (await _context.WatchlistEntries.AnyAsync())
+                {
+                    return;
+                }
+
+                var seededEntries = BuildSeedEntries(tradingOptions);
+                _context.WatchlistEntries.AddRange(seededEntries);
+                await _context.SaveChangesAsync();
+                _logger.LogInformation("Seeded {Count} watchlist entries from Trading options", seededEntries.Count);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error seeding watchlists");
+                throw;
+            }
+        }
+
+        public async Task<List<WatchlistEntry>> GetWatchlistEntriesAsync(string? listType = null)
+        {
+            try
+            {
+                var query = _context.WatchlistEntries.Where(entry => entry.IsActive);
+                var normalizedListType = NormalizeListType(listType);
+
+                if (!string.IsNullOrWhiteSpace(normalizedListType))
+                {
+                    query = query.Where(entry => entry.ListType == normalizedListType);
+                }
+
+                return await query
+                    .OrderBy(entry => entry.ListType)
+                    .ThenBy(entry => entry.SortOrder)
+                    .ThenBy(entry => entry.Symbol)
+                    .ToListAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error retrieving watchlist entries");
+                return [];
+            }
+        }
+
+        public async Task<List<string>> GetWatchlistSymbolsAsync(string listType, IEnumerable<string>? fallbackSymbols = null)
+        {
+            try
+            {
+                var normalizedListType = NormalizeListType(listType);
+                if (string.IsNullOrWhiteSpace(normalizedListType))
+                {
+                    return NormalizeSymbols(fallbackSymbols);
+                }
+
+                var symbols = await _context.WatchlistEntries
+                    .Where(entry => entry.IsActive && entry.ListType == normalizedListType)
+                    .OrderBy(entry => entry.SortOrder)
+                    .ThenBy(entry => entry.Symbol)
+                    .Select(entry => entry.Symbol)
+                    .ToListAsync();
+
+                return symbols.Count > 0
+                    ? symbols
+                    : NormalizeSymbols(fallbackSymbols);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error retrieving watchlist symbols for {ListType}", listType);
+                return NormalizeSymbols(fallbackSymbols);
+            }
+        }
+
+        public async Task<WatchlistEntry?> GetWatchlistEntryByIdAsync(int id)
+        {
+            try
+            {
+                return await _context.WatchlistEntries.FindAsync(id);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error retrieving watchlist entry {Id}", id);
+                return null;
+            }
+        }
+
+        public async Task<WatchlistEntry> CreateWatchlistEntryAsync(string listType, string symbol)
+        {
+            try
+            {
+                var normalizedListType = NormalizeListType(listType);
+                var normalizedSymbol = NormalizeSymbol(symbol);
+
+                if (string.IsNullOrWhiteSpace(normalizedListType) || string.IsNullOrWhiteSpace(normalizedSymbol))
+                {
+                    throw new InvalidOperationException("List type and symbol are required.");
+                }
+
+                var existing = await _context.WatchlistEntries
+                    .FirstOrDefaultAsync(entry => entry.ListType == normalizedListType && entry.Symbol == normalizedSymbol);
+
+                if (existing != null)
+                {
+                    existing.IsActive = true;
+                    existing.UpdatedAt = DateTime.UtcNow;
+                    await _context.SaveChangesAsync();
+                    return existing;
+                }
+
+                var nextSortOrder = await _context.WatchlistEntries
+                    .Where(entry => entry.ListType == normalizedListType)
+                    .Select(entry => (int?)entry.SortOrder)
+                    .MaxAsync() ?? -1;
+
+                var entry = new WatchlistEntry
+                {
+                    ListType = normalizedListType,
+                    Symbol = normalizedSymbol,
+                    SortOrder = nextSortOrder + 1,
+                    IsActive = true,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                };
+
+                _context.WatchlistEntries.Add(entry);
+                await _context.SaveChangesAsync();
+                return entry;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error creating watchlist entry for {ListType} / {Symbol}", listType, symbol);
+                throw;
+            }
+        }
+
+        public async Task DeleteWatchlistEntryAsync(WatchlistEntry entry)
+        {
+            try
+            {
+                _context.WatchlistEntries.Remove(entry);
+                await _context.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error deleting watchlist entry {Id}", entry.Id);
                 throw;
             }
         }
@@ -344,6 +496,65 @@ namespace KrishAgent.Services
                 _logger.LogError(ex, $"Error deleting trade {trade.Id}");
                 throw;
             }
+        }
+
+        private static List<WatchlistEntry> BuildSeedEntries(TradingOptions tradingOptions)
+        {
+            var seededEntries = new List<WatchlistEntry>();
+            AddSeedEntries(seededEntries, WatchlistTypes.Analysis, tradingOptions.AnalysisSymbols);
+            AddSeedEntries(seededEntries, WatchlistTypes.Background, tradingOptions.BackgroundSymbols);
+            AddSeedEntries(seededEntries, WatchlistTypes.DayTrading, tradingOptions.DayTradingSymbols);
+            AddSeedEntries(seededEntries, WatchlistTypes.PennyStock, tradingOptions.PennyStockSymbols);
+            return seededEntries;
+        }
+
+        private static void AddSeedEntries(List<WatchlistEntry> entries, string listType, IEnumerable<string>? symbols)
+        {
+            var orderedSymbols = NormalizeSymbols(symbols);
+            for (var i = 0; i < orderedSymbols.Count; i++)
+            {
+                entries.Add(new WatchlistEntry
+                {
+                    ListType = listType,
+                    Symbol = orderedSymbols[i],
+                    SortOrder = i,
+                    IsActive = true,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                });
+            }
+        }
+
+        private static List<string> NormalizeSymbols(IEnumerable<string>? symbols)
+        {
+            return (symbols ?? [])
+                .Where(symbol => !string.IsNullOrWhiteSpace(symbol))
+                .Select(NormalizeSymbol)
+                .Where(symbol => !string.IsNullOrWhiteSpace(symbol))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private static string NormalizeSymbol(string? symbol)
+        {
+            return symbol?.Trim().ToUpperInvariant() ?? string.Empty;
+        }
+
+        private static string NormalizeListType(string? listType)
+        {
+            return listType?.Trim().ToLowerInvariant() switch
+            {
+                WatchlistTypes.Analysis => WatchlistTypes.Analysis,
+                WatchlistTypes.Background => WatchlistTypes.Background,
+                WatchlistTypes.DayTrading => WatchlistTypes.DayTrading,
+                WatchlistTypes.PennyStock => WatchlistTypes.PennyStock,
+                "daytrading" => WatchlistTypes.DayTrading,
+                "day-trading" => WatchlistTypes.DayTrading,
+                "penny" => WatchlistTypes.PennyStock,
+                "penny-stocks" => WatchlistTypes.PennyStock,
+                "penny_stocks" => WatchlistTypes.PennyStock,
+                _ => string.Empty
+            };
         }
     }
 }

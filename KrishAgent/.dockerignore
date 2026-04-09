@@ -1,0 +1,9 @@
+bin/
+obj/
+.vs/
+.vscode/
+.codex-runlogs/
+trading.db
+trading.db-shm
+trading.db-wal
+*.user

@@ -4,6 +4,10 @@ import { FormEvent, useEffect, useState } from 'react';
 
 const configuredApiBase = process.env.NEXT_PUBLIC_API_BASE?.trim().replace(/\/$/, '');
 
+type DashboardTab = 'analysis' | 'watchlists' | 'intraday' | 'penny' | 'portfolio' | 'trades' | 'alerts';
+type LiveStreamStatus = 'idle' | 'connecting' | 'live' | 'reconnecting';
+type WatchlistListType = 'analysis' | 'background' | 'day_trading' | 'penny_stock';
+
 interface AnalysisResult {
   symbol: string;
   price: number;
@@ -56,6 +60,16 @@ interface AlertItem {
   createdAt: string;
 }
 
+interface WatchlistEntry {
+  id: number;
+  listType: WatchlistListType;
+  symbol: string;
+  sortOrder: number;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface DayTradingIdea {
   symbol: string;
   action: string;
@@ -87,6 +101,43 @@ interface DayTradingBoard {
   picks: DayTradingIdea[];
 }
 
+const normalizeBoard = (payload: Partial<DayTradingBoard> | null | undefined): DayTradingBoard | null => {
+  if (!payload) {
+    return null;
+  }
+
+  return {
+    generatedAtUtc: payload.generatedAtUtc ?? '',
+    timeframe: payload.timeframe ?? '',
+    marketStatus: payload.marketStatus ?? '',
+    beginnerNote: payload.beginnerNote ?? '',
+    picks: Array.isArray(payload.picks) ? payload.picks : [],
+  };
+};
+
+const watchlistGroups: { key: WatchlistListType; label: string; description: string }[] = [
+  {
+    key: 'analysis',
+    label: 'Analysis Feed',
+    description: 'Symbols used by the AI analysis tab.',
+  },
+  {
+    key: 'background',
+    label: 'Background Sync',
+    description: 'Symbols the backend keeps refreshing into local history.',
+  },
+  {
+    key: 'day_trading',
+    label: 'Day Trading Scanner',
+    description: 'Symbols scanned for live intraday ideas.',
+  },
+  {
+    key: 'penny_stock',
+    label: 'Penny Stock Scanner',
+    description: 'Symbols scanned for sub-$10 momentum ideas.',
+  },
+];
+
 export default function Home() {
   const apiBase =
     configuredApiBase ||
@@ -94,19 +145,27 @@ export default function Home() {
       ? 'http://localhost:5220/api'
       : `http://${window.location.hostname}:5220/api`);
 
-  const [activeTab, setActiveTab] = useState<'analysis' | 'intraday' | 'penny' | 'portfolio' | 'trades' | 'alerts'>('analysis');
+  const [activeTab, setActiveTab] = useState<DashboardTab>('analysis');
   const [analysis, setAnalysis] = useState<AnalysisResult[]>([]);
   const [dayTradingBoard, setDayTradingBoard] = useState<DayTradingBoard | null>(null);
   const [pennyStockBoard, setPennyStockBoard] = useState<DayTradingBoard | null>(null);
   const [portfolio, setPortfolio] = useState<PortfolioPosition[]>([]);
   const [trades, setTrades] = useState<Trade[]>([]);
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
+  const [watchlists, setWatchlists] = useState<WatchlistEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [analysisUpdatedAt, setAnalysisUpdatedAt] = useState<string | null>(null);
+  const [watchlistsUpdatedAt, setWatchlistsUpdatedAt] = useState<string | null>(null);
   const [dayTradingUpdatedAt, setDayTradingUpdatedAt] = useState<string | null>(null);
   const [pennyStocksUpdatedAt, setPennyStocksUpdatedAt] = useState<string | null>(null);
+  const [intradayStreamStatus, setIntradayStreamStatus] = useState<LiveStreamStatus>('idle');
+  const [pennyStreamStatus, setPennyStreamStatus] = useState<LiveStreamStatus>('idle');
+  const [watchlistForm, setWatchlistForm] = useState<{ listType: WatchlistListType; symbol: string }>({
+    listType: 'day_trading',
+    symbol: '',
+  });
   const [portfolioForm, setPortfolioForm] = useState({
     symbol: '',
     quantity: 0,
@@ -141,6 +200,8 @@ export default function Home() {
   useEffect(() => {
     if (activeTab === 'analysis') {
       fetchAnalysis();
+    } else if (activeTab === 'watchlists') {
+      fetchWatchlists();
     } else if (activeTab === 'intraday') {
       fetchDayTrading();
     } else if (activeTab === 'penny') {
@@ -166,21 +227,67 @@ export default function Home() {
 
   useEffect(() => {
     if (activeTab !== 'intraday') {
+      setIntradayStreamStatus('idle');
       return;
     }
 
-    const interval = setInterval(fetchDayTrading, 60000);
-    return () => clearInterval(interval);
-  }, [activeTab]);
+    setIntradayStreamStatus('connecting');
+    const source = new EventSource(`${apiBase}/stream/trade/intraday`);
+
+    source.onmessage = (event) => {
+      try {
+        const board = normalizeBoard(JSON.parse(event.data) as Partial<DayTradingBoard>);
+        setDayTradingBoard(board);
+        setDayTradingUpdatedAt(new Date().toLocaleTimeString());
+        setError(null);
+        setLoading(false);
+        setIntradayStreamStatus('live');
+      } catch {
+        setIntradayStreamStatus('reconnecting');
+      }
+    };
+
+    source.onerror = () => {
+      setIntradayStreamStatus((current) => (current === 'live' ? 'reconnecting' : 'connecting'));
+    };
+
+    return () => {
+      source.close();
+      setIntradayStreamStatus('idle');
+    };
+  }, [activeTab, apiBase]);
 
   useEffect(() => {
     if (activeTab !== 'penny') {
+      setPennyStreamStatus('idle');
       return;
     }
 
-    const interval = setInterval(fetchPennyStocks, 60000);
-    return () => clearInterval(interval);
-  }, [activeTab]);
+    setPennyStreamStatus('connecting');
+    const source = new EventSource(`${apiBase}/stream/trade/penny-stocks`);
+
+    source.onmessage = (event) => {
+      try {
+        const board = normalizeBoard(JSON.parse(event.data) as Partial<DayTradingBoard>);
+        setPennyStockBoard(board);
+        setPennyStocksUpdatedAt(new Date().toLocaleTimeString());
+        setError(null);
+        setLoading(false);
+        setPennyStreamStatus('live');
+      } catch {
+        setPennyStreamStatus('reconnecting');
+      }
+    };
+
+    source.onerror = () => {
+      setPennyStreamStatus((current) => (current === 'live' ? 'reconnecting' : 'connecting'));
+    };
+
+    return () => {
+      source.close();
+      setPennyStreamStatus('idle');
+    };
+  }, [activeTab, apiBase]);
 
   useEffect(() => {
     if (activeTab !== 'alerts') {
@@ -306,6 +413,69 @@ export default function Home() {
       setError(err instanceof Error ? err.message : 'Failed to load alerts');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchWatchlists = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(`${apiBase}/watchlists`);
+      if (!response.ok) {
+        throw new Error(await handleApiError(response));
+      }
+
+      setWatchlists(await response.json());
+      setWatchlistsUpdatedAt(new Date().toLocaleTimeString());
+    } catch (err) {
+      setWatchlists([]);
+      setError(err instanceof Error ? err.message : 'Failed to load watchlists');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const submitWatchlist = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setError(null);
+    setMessage(null);
+
+    try {
+      const response = await fetch(`${apiBase}/watchlists`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          listType: watchlistForm.listType,
+          symbol: watchlistForm.symbol,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(await handleApiError(response));
+      }
+
+      await fetchWatchlists();
+      setMessage('Watchlist updated successfully');
+      setWatchlistForm((current) => ({ ...current, symbol: '' }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to add watchlist symbol');
+    }
+  };
+
+  const deleteWatchlistEntry = async (id: number) => {
+    setError(null);
+    setMessage(null);
+
+    try {
+      const response = await fetch(`${apiBase}/watchlists/${id}`, { method: 'DELETE' });
+      if (!response.ok) {
+        throw new Error(await handleApiError(response));
+      }
+
+      await fetchWatchlists();
+      setMessage('Watchlist symbol removed');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to remove watchlist symbol');
     }
   };
 
@@ -512,23 +682,32 @@ export default function Home() {
   const activeUpdatedAt =
     activeTab === 'analysis'
       ? analysisUpdatedAt
+      : activeTab === 'watchlists'
+      ? watchlistsUpdatedAt
       : activeTab === 'intraday'
       ? dayTradingUpdatedAt
       : activeTab === 'penny'
       ? pennyStocksUpdatedAt
       : null;
+  const activeLiveStatus =
+    activeTab === 'intraday'
+      ? intradayStreamStatus
+      : activeTab === 'penny'
+      ? pennyStreamStatus
+      : 'idle';
   const formatCurrency = (value: number) => `$${value.toFixed(2)}`;
   const formatSignedPercent = (value: number) => `${value >= 0 ? '+' : ''}${value.toFixed(2)}%`;
 
   const renderTabs = () => {
     const tabs = [
       { key: 'analysis', label: 'Analysis' },
+      { key: 'watchlists', label: 'Watchlists' },
       { key: 'intraday', label: 'Day Trading' },
       { key: 'penny', label: 'Penny Stocks' },
       { key: 'portfolio', label: 'Portfolio' },
       { key: 'trades', label: 'Trades' },
       { key: 'alerts', label: 'Alerts' },
-    ] as const;
+    ] satisfies { key: DashboardTab; label: string }[];
 
     return (
       <div className="mb-6 flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
@@ -547,9 +726,26 @@ export default function Home() {
             </button>
           ))}
         </div>
-        {activeUpdatedAt && (
-          <div className="text-sm text-slate-400">Last refreshed at {activeUpdatedAt}</div>
-        )}
+        <div className="flex flex-wrap items-center gap-3 text-sm text-slate-400">
+          {activeUpdatedAt && <div>Last refreshed at {activeUpdatedAt}</div>}
+          {(activeTab === 'intraday' || activeTab === 'penny') && (
+            <div
+              className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${
+                activeLiveStatus === 'live'
+                  ? 'bg-emerald-500/15 text-emerald-300'
+                  : activeLiveStatus === 'reconnecting'
+                  ? 'bg-amber-500/15 text-amber-300'
+                  : 'bg-slate-800 text-slate-300'
+              }`}
+            >
+              {activeLiveStatus === 'live'
+                ? 'Live Stream On'
+                : activeLiveStatus === 'reconnecting'
+                ? 'Reconnecting'
+                : 'Connecting'}
+            </div>
+          )}
+        </div>
       </div>
     );
   };
@@ -618,7 +814,9 @@ export default function Home() {
             {!loading && error && <div className="mt-6 rounded-3xl bg-rose-950 p-6 text-slate-200">{error}</div>}
 
             {!loading && !error && (!dayTradingBoard || dayTradingBoard.picks.length === 0) && (
-              <div className="mt-6 rounded-3xl bg-slate-900 p-8 text-center text-slate-400">No intraday trade ideas are available yet.</div>
+              <div className="mt-6 rounded-3xl bg-slate-900 p-8 text-center text-slate-400">
+                No intraday setups are ready yet. This is common near the open or during quieter tape, so give the scanner another minute and refresh.
+              </div>
             )}
 
             {!loading && !error && dayTradingBoard && dayTradingBoard.picks.length > 0 && (
@@ -760,7 +958,9 @@ export default function Home() {
             {!loading && error && <div className="mt-6 rounded-3xl bg-rose-950 p-6 text-slate-200">{error}</div>}
 
             {!loading && !error && (!pennyStockBoard || pennyStockBoard.picks.length === 0) && (
-              <div className="mt-6 rounded-3xl bg-slate-900 p-8 text-center text-slate-400">No penny stock ideas are available right now.</div>
+              <div className="mt-6 rounded-3xl bg-slate-900 p-8 text-center text-slate-400">
+                No penny-stock setups are ready yet. The scanner is still filtering for sub-$10 names with enough momentum, so check back after a few more candles print.
+              </div>
             )}
 
             {!loading && !error && pennyStockBoard && pennyStockBoard.picks.length > 0 && (
@@ -914,6 +1114,120 @@ export default function Home() {
                 </table>
               </div>
             )}
+          </section>
+        )}
+
+        {activeTab === 'watchlists' && (
+          <section>
+            <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
+              <div className="rounded-3xl border border-slate-800 bg-slate-900 p-6 shadow-lg shadow-slate-950/40">
+                <h2 className="text-2xl font-semibold">Manage Watchlists</h2>
+                <p className="mt-2 text-sm text-slate-400">
+                  These symbols now drive the analysis feed, background price sync, and the live day-trading scanners.
+                </p>
+
+                <form onSubmit={submitWatchlist} className="mt-6 space-y-4">
+                  <label className="block text-sm text-slate-300">
+                    Watchlist
+                    <select
+                      value={watchlistForm.listType}
+                      onChange={(event) =>
+                        setWatchlistForm({
+                          ...watchlistForm,
+                          listType: event.target.value as WatchlistListType,
+                        })
+                      }
+                      className="mt-2 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-slate-100 outline-none focus:border-slate-500"
+                    >
+                      {watchlistGroups.map((group) => (
+                        <option key={group.key} value={group.key}>
+                          {group.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="block text-sm text-slate-300">
+                    Symbol
+                    <input
+                      required
+                      value={watchlistForm.symbol}
+                      onChange={(event) =>
+                        setWatchlistForm({
+                          ...watchlistForm,
+                          symbol: event.target.value.toUpperCase(),
+                        })
+                      }
+                      placeholder="AAPL"
+                      className="mt-2 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-slate-100 outline-none focus:border-slate-500"
+                    />
+                  </label>
+
+                  <button
+                    type="submit"
+                    className="inline-flex items-center justify-center rounded-full bg-emerald-500 px-6 py-3 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400"
+                  >
+                    Add Symbol
+                  </button>
+                </form>
+
+                <div className="mt-6 rounded-3xl border border-emerald-500/20 bg-emerald-950/20 p-4 text-sm text-emerald-100">
+                  Changes flow into the scanners automatically. New symbols start using REST fallback immediately, then
+                  join the live stream subscription as the backend refreshes its watchlist channels.
+                </div>
+              </div>
+
+              <div className="space-y-5">
+                {loading ? (
+                  <div className="rounded-3xl bg-slate-900 p-8 text-center text-slate-400">Loading watchlists...</div>
+                ) : (
+                  watchlistGroups.map((group) => {
+                    const entries = watchlists.filter((entry) => entry.listType === group.key);
+
+                    return (
+                      <div key={group.key} className="rounded-3xl border border-slate-800 bg-slate-900 p-6 shadow-lg shadow-slate-950/40">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <div>
+                            <h3 className="text-xl font-semibold text-white">{group.label}</h3>
+                            <p className="mt-2 text-sm text-slate-400">{group.description}</p>
+                          </div>
+                          <div className="rounded-full bg-slate-950 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-300">
+                            {entries.length} symbols
+                          </div>
+                        </div>
+
+                        {entries.length === 0 ? (
+                          <div className="mt-5 rounded-3xl bg-slate-950 p-5 text-sm text-slate-400">
+                            No symbols configured for this watchlist yet.
+                          </div>
+                        ) : (
+                          <div className="mt-5 flex flex-wrap gap-3">
+                            {entries.map((entry) => (
+                              <div
+                                key={entry.id}
+                                className="flex items-center gap-3 rounded-full border border-slate-700 bg-slate-950 px-4 py-3"
+                              >
+                                <div>
+                                  <p className="text-sm font-semibold text-white">{entry.symbol}</p>
+                                  <p className="text-xs text-slate-500">Order {entry.sortOrder + 1}</p>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => deleteWatchlistEntry(entry.id)}
+                                  className="rounded-full bg-rose-500 px-3 py-1.5 text-xs font-semibold text-slate-950 transition hover:bg-rose-400"
+                                >
+                                  Remove
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
           </section>
         )}
 
