@@ -1,7 +1,9 @@
+using KrishAgent.Configuration;
 using Microsoft.AspNetCore.Mvc;
 using KrishAgent.Services;
 using KrishAgent.Models;
 using System.Text.Json;
+using Microsoft.Extensions.Options;
 
 namespace KrishAgent.Controllers
 {
@@ -13,13 +15,20 @@ namespace KrishAgent.Controllers
         private readonly IndicatorService _indicatorService;
         private readonly AIService _aiService;
         private readonly DataService _dataService;
+        private readonly TradingOptions _tradingOptions;
 
-        public TradingController(MarketService marketService, IndicatorService indicatorService, AIService aiService, DataService dataService)
+        public TradingController(
+            MarketService marketService,
+            IndicatorService indicatorService,
+            AIService aiService,
+            DataService dataService,
+            IOptions<TradingOptions> tradingOptions)
         {
             _marketService = marketService;
             _indicatorService = indicatorService;
             _aiService = aiService;
             _dataService = dataService;
+            _tradingOptions = tradingOptions.Value;
         }
 
         [HttpGet("test")]
@@ -31,8 +40,7 @@ namespace KrishAgent.Controllers
         [HttpGet("trade/analyze")]
         public async Task<IActionResult> Analyze()
         {
-            var symbols = new[] { "AAPL", "TSLA", "SPY" };
-            return await PerformAnalysis(symbols);
+            return await PerformAnalysis(_tradingOptions.AnalysisSymbols);
         }
 
         [HttpPost("trade/analyze")]
@@ -378,13 +386,14 @@ namespace KrishAgent.Controllers
 
             try
             {
+                var cancellationToken = HttpContext?.RequestAborted ?? CancellationToken.None;
                 var stockPayload = new List<StockSnapshot>();
 
                 foreach (var symbol in normalizedSymbols)
                 {
                     try
                     {
-                        var json = await _marketService.GetMarketData(symbol);
+                        var json = await _marketService.GetMarketData(symbol, cancellationToken);
                         var quotes = _indicatorService.ConvertAlpacaJsonToQuotes(json);
                         var rsi = _indicatorService.CalculateRsi(quotes);
 
@@ -418,7 +427,7 @@ namespace KrishAgent.Controllers
                 }
 
                 var inputJson = JsonSerializer.Serialize(stockPayload);
-                var aiContent = await _aiService.Analyze(inputJson);
+                var aiContent = await _aiService.Analyze(inputJson, cancellationToken);
 
                 try
                 {
@@ -464,7 +473,7 @@ namespace KrishAgent.Controllers
                             Action = result.Action,
                             Confidence = result.Confidence,
                             Reason = result.Reason,
-                            AIModel = "gpt-3.5-turbo"
+                            AIModel = _aiService.ConfiguredModel
                         };
 
                         await _dataService.SaveAnalysisHistoryAsync(analysisHistory);

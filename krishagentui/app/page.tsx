@@ -2,6 +2,8 @@
 
 import { FormEvent, useEffect, useState } from 'react';
 
+const configuredApiBase = process.env.NEXT_PUBLIC_API_BASE?.trim().replace(/\/$/, '');
+
 interface AnalysisResult {
   symbol: string;
   price: number;
@@ -56,9 +58,10 @@ interface AlertItem {
 
 export default function Home() {
   const apiBase =
-    typeof window === 'undefined'
+    configuredApiBase ||
+    (typeof window === 'undefined'
       ? 'http://localhost:5220/api'
-      : `http://${window.location.hostname}:5220/api`;
+      : `http://${window.location.hostname}:5220/api`);
 
   const [activeTab, setActiveTab] = useState<'analysis' | 'portfolio' | 'trades' | 'alerts'>('analysis');
   const [analysis, setAnalysis] = useState<AnalysisResult[]>([]);

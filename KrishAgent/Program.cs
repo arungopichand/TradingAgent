@@ -1,3 +1,4 @@
+using KrishAgent.Configuration;
 using KrishAgent.Services;
 using Microsoft.EntityFrameworkCore;
 using KrishAgent.Data;
@@ -13,6 +14,10 @@ if (builder.Environment.IsDevelopment())
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
 builder.Logging.AddDebug();
+
+builder.Services.Configure<AlpacaOptions>(builder.Configuration.GetSection(AlpacaOptions.SectionName));
+builder.Services.Configure<OpenAiOptions>(builder.Configuration.GetSection(OpenAiOptions.SectionName));
+builder.Services.Configure<TradingOptions>(builder.Configuration.GetSection(TradingOptions.SectionName));
 
 // Add services to the container.
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
@@ -41,6 +46,25 @@ builder.Services.AddCors(options =>
 });
 
 var app = builder.Build();
+
+await using (var startupScope = app.Services.CreateAsyncScope())
+{
+    var dbContext = startupScope.ServiceProvider.GetRequiredService<TradingContext>();
+    var startupLogger = startupScope.ServiceProvider
+        .GetRequiredService<ILoggerFactory>()
+        .CreateLogger("Startup");
+
+    try
+    {
+        await dbContext.Database.MigrateAsync();
+        startupLogger.LogInformation("Database migrations applied successfully");
+    }
+    catch (Exception ex)
+    {
+        startupLogger.LogError(ex, "Failed to apply database migrations");
+        throw;
+    }
+}
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
