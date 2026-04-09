@@ -12,7 +12,7 @@ namespace KrishAgent.Models
     {
         public string Symbol { get; set; } = string.Empty;
         public string Trend { get; set; } = string.Empty;
-        public int Confidence { get; set; }
+        public decimal Confidence { get; set; }
         public string Reason { get; set; } = string.Empty;
         public string Action { get; set; } = string.Empty;
     }

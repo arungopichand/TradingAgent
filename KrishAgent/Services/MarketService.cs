@@ -1,5 +1,6 @@
 using System.Net.Http;
 using Microsoft.Extensions.Configuration;
+using System.Globalization;
 
 namespace KrishAgent.Services
 {
@@ -23,7 +24,15 @@ namespace KrishAgent.Services
             {
                 EnsureConfigured();
 
-                var url = $"https://data.alpaca.markets/v2/stocks/{Uri.EscapeDataString(symbol)}/bars?timeframe=1Day&limit=30";
+                var normalizedSymbol = symbol.Trim().ToUpperInvariant();
+                var end = DateTime.UtcNow;
+                var start = end.AddDays(-90);
+                var startText = Uri.EscapeDataString(start.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture));
+                var endText = Uri.EscapeDataString(end.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture));
+
+                var url =
+                    $"https://data.alpaca.markets/v2/stocks/{Uri.EscapeDataString(normalizedSymbol)}/bars" +
+                    $"?timeframe=1Day&limit=30&start={startText}&end={endText}&feed=iex&adjustment=raw";
                 var request = new HttpRequestMessage(HttpMethod.Get, url);
                 request.Headers.Add("APCA-API-KEY-ID", _apiKey);
                 request.Headers.Add("APCA-API-SECRET-KEY", _secretKey);

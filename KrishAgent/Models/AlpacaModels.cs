@@ -26,6 +26,9 @@ namespace KrishAgent.Models
     public class AlpacaBarsResponse
     {
         [JsonPropertyName("bars")]
-        public List<AlpacaBar> Bars { get; set; } = [];
+        public List<AlpacaBar>? Bars { get; set; }
+
+        [JsonPropertyName("symbol")]
+        public string? Symbol { get; set; }
     }
 }

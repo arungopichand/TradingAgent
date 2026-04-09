@@ -8,12 +8,16 @@ obj/
 *.userosscache
 *.csproj.user
 *.db
+*.db-shm
+*.db-wal
 *.db-journal
 *.sqlite
 *.sqlite3
 *.log
+*.pid
 .vs/
 .vscode/
+.codex-runlogs/
 
 # Node.js build artifacts
 node_modules/

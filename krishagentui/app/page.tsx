@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 
 interface AnalysisResult {
   symbol: string;
@@ -12,201 +12,1048 @@ interface AnalysisResult {
   reason: string;
 }
 
+interface PortfolioPosition {
+  id: number;
+  symbol: string;
+  quantity: number;
+  entryPrice: number;
+  entryDate: string;
+  stopLoss?: number | null;
+  takeProfit?: number | null;
+  notes: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface Trade {
+  id: number;
+  symbol: string;
+  side: string;
+  quantity: number;
+  entryPrice: number;
+  entryDate: string;
+  exitPrice?: number | null;
+  exitDate?: string | null;
+  pnl?: number | null;
+  pnlPercent?: number | null;
+  exitReason: string;
+  notes: string;
+  createdAt: string;
+}
+
+interface AlertItem {
+  id: number;
+  symbol: string;
+  alertType: string;
+  threshold: number;
+  condition: string;
+  isActive: boolean;
+  isTriggered: boolean;
+  triggeredAt?: string | null;
+  expiresAt?: string | null;
+  createdAt: string;
+}
+
 export default function Home() {
-  const [data, setData] = useState<AnalysisResult[]>([]);
-  const [loading, setLoading] = useState(true);
+  const apiBase =
+    typeof window === 'undefined'
+      ? 'http://localhost:5220/api'
+      : `http://${window.location.hostname}:5220/api`;
+
+  const [activeTab, setActiveTab] = useState<'analysis' | 'portfolio' | 'trades' | 'alerts'>('analysis');
+  const [analysis, setAnalysis] = useState<AnalysisResult[]>([]);
+  const [portfolio, setPortfolio] = useState<PortfolioPosition[]>([]);
+  const [trades, setTrades] = useState<Trade[]>([]);
+  const [alerts, setAlerts] = useState<AlertItem[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [lastUpdated, setLastUpdated] = useState<string | null>(null);
+  const [analysisUpdatedAt, setAnalysisUpdatedAt] = useState<string | null>(null);
+  const [portfolioForm, setPortfolioForm] = useState({
+    symbol: '',
+    quantity: 0,
+    entryPrice: 0,
+    entryDate: new Date().toISOString().slice(0, 10),
+    stopLoss: '',
+    takeProfit: '',
+    notes: '',
+  });
+  const [tradeForm, setTradeForm] = useState({
+    symbol: '',
+    side: 'buy',
+    quantity: 0,
+    entryPrice: 0,
+    entryDate: new Date().toISOString().slice(0, 10),
+    exitPrice: '',
+    exitDate: '',
+    pnl: '',
+    pnlPercent: '',
+    exitReason: '',
+    notes: '',
+  });
+  const [alertForm, setAlertForm] = useState({
+    symbol: '',
+    alertType: 'price_above',
+    threshold: 0,
+    condition: '',
+    expiresAt: '',
+  });
+  const [editingAlertId, setEditingAlertId] = useState<number | null>(null);
 
   useEffect(() => {
-    const fetchAnalysis = async () => {
-      try {
-        setLoading(true);
-        setError(null);
-        const response = await fetch('http://localhost:5220/api/trade/analyze');
+    if (activeTab === 'analysis') {
+      fetchAnalysis();
+    } else if (activeTab === 'portfolio') {
+      fetchPortfolio();
+    } else if (activeTab === 'trades') {
+      fetchTrades();
+    } else if (activeTab === 'alerts') {
+      fetchAlerts();
+    }
+  }, [activeTab]);
 
-        if (!response.ok) {
-          throw new Error(`API error: ${response.status}`);
-        }
-
-        const result = await response.json();
-        
-        // Handle both array and object responses
-        const analysisData = Array.isArray(result) ? result : [result];
-        setData(analysisData);
-        setLastUpdated(new Date().toLocaleTimeString());
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to fetch analysis data');
-        setData([]);
-      } finally {
-        setLoading(false);
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (activeTab === 'analysis') {
+        fetchAnalysis();
       }
-    };
+    }, 300000);
 
-    // Initial fetch
-    fetchAnalysis();
+    return () => clearInterval(interval);
+  }, [activeTab]);
 
-    // Auto-refresh every 5 minutes (300000 ms)
-    const intervalId = setInterval(fetchAnalysis, 300000);
+  useEffect(() => {
+    if (activeTab !== 'alerts') {
+      return;
+    }
 
-    // Cleanup interval on unmount
-    return () => clearInterval(intervalId);
-  }, []);
+    const interval = setInterval(fetchAlerts, 30000);
+    return () => clearInterval(interval);
+  }, [activeTab]);
 
-  const getActionColor = (action: string): string => {
-    switch (action.toLowerCase()) {
-      case 'buy_watch':
-        return 'text-green-400';
-      case 'sell_watch':
-        return 'text-red-400';
-      case 'hold':
-        return 'text-yellow-400';
-      default:
-        return 'text-gray-400';
+  const handleApiError = async (response: Response) => {
+    const text = await response.text();
+    try {
+      const json = JSON.parse(text);
+      return json.error ?? response.statusText;
+    } catch {
+      return response.statusText || 'Unknown error';
     }
   };
 
-  const getActionBgColor = (action: string): string => {
-    switch (action.toLowerCase()) {
-      case 'buy_watch':
-        return 'bg-green-900/20';
-      case 'sell_watch':
-        return 'bg-red-900/20';
-      case 'hold':
-        return 'bg-yellow-900/20';
-      default:
-        return 'bg-gray-900/20';
+  const fetchAnalysis = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(`${apiBase}/trade/analyze`);
+      if (!response.ok) {
+        throw new Error(await handleApiError(response));
+      }
+      const data = await response.json();
+      setAnalysis(Array.isArray(data) ? data : [data]);
+      setAnalysisUpdatedAt(new Date().toLocaleTimeString());
+    } catch (err) {
+      setAnalysis([]);
+      setError(err instanceof Error ? err.message : 'Failed to load analysis');
+    } finally {
+      setLoading(false);
     }
+  };
+
+  const fetchPortfolio = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(`${apiBase}/portfolio`);
+      if (!response.ok) {
+        throw new Error(await handleApiError(response));
+      }
+      setPortfolio(await response.json());
+    } catch (err) {
+      setPortfolio([]);
+      setError(err instanceof Error ? err.message : 'Failed to load portfolio');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchTrades = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(`${apiBase}/trades`);
+      if (!response.ok) {
+        throw new Error(await handleApiError(response));
+      }
+      setTrades(await response.json());
+    } catch (err) {
+      setTrades([]);
+      setError(err instanceof Error ? err.message : 'Failed to load trades');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchAlerts = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await fetch(`${apiBase}/alerts`);
+      if (!response.ok) {
+        throw new Error(await handleApiError(response));
+      }
+      setAlerts(await response.json());
+    } catch (err) {
+      setAlerts([]);
+      setError(err instanceof Error ? err.message : 'Failed to load alerts');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const submitPortfolio = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setError(null);
+    setMessage(null);
+
+    try {
+      const response = await fetch(`${apiBase}/portfolio`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          symbol: portfolioForm.symbol,
+          quantity: Number(portfolioForm.quantity),
+          entryPrice: Number(portfolioForm.entryPrice),
+          entryDate: portfolioForm.entryDate,
+          stopLoss: portfolioForm.stopLoss ? Number(portfolioForm.stopLoss) : null,
+          takeProfit: portfolioForm.takeProfit ? Number(portfolioForm.takeProfit) : null,
+          notes: portfolioForm.notes,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(await handleApiError(response));
+      }
+
+      await fetchPortfolio();
+      setMessage('Portfolio position added successfully');
+      setPortfolioForm({
+        symbol: '',
+        quantity: 0,
+        entryPrice: 0,
+        entryDate: new Date().toISOString().slice(0, 10),
+        stopLoss: '',
+        takeProfit: '',
+        notes: '',
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create portfolio position');
+    }
+  };
+
+  const submitTrade = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setError(null);
+    setMessage(null);
+
+    try {
+      const response = await fetch(`${apiBase}/trades`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          symbol: tradeForm.symbol,
+          side: tradeForm.side,
+          quantity: Number(tradeForm.quantity),
+          entryPrice: Number(tradeForm.entryPrice),
+          entryDate: tradeForm.entryDate,
+          exitPrice: tradeForm.exitPrice ? Number(tradeForm.exitPrice) : null,
+          exitDate: tradeForm.exitDate || null,
+          pnl: tradeForm.pnl ? Number(tradeForm.pnl) : null,
+          pnlPercent: tradeForm.pnlPercent ? Number(tradeForm.pnlPercent) : null,
+          exitReason: tradeForm.exitReason,
+          notes: tradeForm.notes,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(await handleApiError(response));
+      }
+
+      await fetchTrades();
+      setMessage('Trade added successfully');
+      setTradeForm({
+        symbol: '',
+        side: 'buy',
+        quantity: 0,
+        entryPrice: 0,
+        entryDate: new Date().toISOString().slice(0, 10),
+        exitPrice: '',
+        exitDate: '',
+        pnl: '',
+        pnlPercent: '',
+        exitReason: '',
+        notes: '',
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create trade');
+    }
+  };
+
+  const deletePortfolioPosition = async (id: number) => {
+    setError(null);
+    setMessage(null);
+    try {
+      const response = await fetch(`${apiBase}/portfolio/${id}`, { method: 'DELETE' });
+      if (!response.ok) {
+        throw new Error(await handleApiError(response));
+      }
+      await fetchPortfolio();
+      setMessage('Portfolio position removed');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to remove position');
+    }
+  };
+
+  const deleteTrade = async (id: number) => {
+    setError(null);
+    setMessage(null);
+    try {
+      const response = await fetch(`${apiBase}/trades/${id}`, { method: 'DELETE' });
+      if (!response.ok) {
+        throw new Error(await handleApiError(response));
+      }
+      await fetchTrades();
+      setMessage('Trade removed successfully');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to remove trade');
+    }
+  };
+
+  const submitAlert = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setError(null);
+    setMessage(null);
+
+    try {
+      const url = editingAlertId ? `${apiBase}/alerts/${editingAlertId}` : `${apiBase}/alerts`;
+      const method = editingAlertId ? 'PUT' : 'POST';
+
+      const response = await fetch(url, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          symbol: alertForm.symbol,
+          alertType: alertForm.alertType,
+          threshold: Number(alertForm.threshold),
+          condition: alertForm.condition,
+          isActive: true,
+          expiresAt: alertForm.expiresAt || null,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(await handleApiError(response));
+      }
+
+      await fetchAlerts();
+      setMessage(editingAlertId ? 'Alert updated successfully' : 'Alert created successfully');
+      setAlertForm({
+        symbol: '',
+        alertType: 'price_above',
+        threshold: 0,
+        condition: '',
+        expiresAt: '',
+      });
+      setEditingAlertId(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save alert');
+    }
+  };
+
+  const startEditAlert = (alert: AlertItem) => {
+    setEditingAlertId(alert.id);
+    setAlertForm({
+      symbol: alert.symbol,
+      alertType: alert.alertType,
+      threshold: alert.threshold,
+      condition: alert.condition,
+      expiresAt: alert.expiresAt ? alert.expiresAt.slice(0, 10) : '',
+    });
+  };
+
+  const cancelEditAlert = () => {
+    setEditingAlertId(null);
+    setAlertForm({
+      symbol: '',
+      alertType: 'price_above',
+      threshold: 0,
+      condition: '',
+      expiresAt: '',
+    });
+  };
+
+  const deleteAlert = async (id: number) => {
+    setError(null);
+    setMessage(null);
+    try {
+      const response = await fetch(`${apiBase}/alerts/${id}`, { method: 'DELETE' });
+      if (!response.ok) {
+        throw new Error(await handleApiError(response));
+      }
+      await fetchAlerts();
+      setMessage('Alert removed successfully');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to remove alert');
+    }
+  };
+
+  const activeAlerts = alerts.filter((alert) => !alert.isTriggered);
+  const triggeredAlerts = alerts.filter((alert) => alert.isTriggered);
+
+  const renderTabs = () => {
+    const tabs = [
+      { key: 'analysis', label: 'Analysis' },
+      { key: 'portfolio', label: 'Portfolio' },
+      { key: 'trades', label: 'Trades' },
+      { key: 'alerts', label: 'Alerts' },
+    ] as const;
+
+    return (
+      <div className="mb-6 flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
+        <div className="flex flex-wrap gap-2">
+          {tabs.map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key)}
+              className={`rounded-full px-4 py-2 text-sm font-semibold transition ${
+                activeTab === tab.key
+                  ? 'bg-slate-100 text-slate-950'
+                  : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+        {activeTab === 'analysis' && analysisUpdatedAt && (
+          <div className="text-sm text-slate-400">Last refreshed at {analysisUpdatedAt}</div>
+        )}
+      </div>
+    );
   };
 
   return (
-    <div className="min-h-screen" style={{ backgroundColor: '#0B0F19' }}>
-      <div className="max-w-7xl mx-auto px-4 py-8">
-        {/* Header */}
-        <div className="mb-8 flex justify-between items-start">
-          <div>
-            <h1 className="text-4xl font-bold text-white mb-2">Krish Agent</h1>
-            <p className="text-gray-400">AI-Powered Trading Analysis Dashboard</p>
-          </div>
-          {lastUpdated && (
-            <div className="text-right">
-              <p className="text-gray-400 text-sm">Last Updated:</p>
-              <p className="text-white font-mono text-lg">{lastUpdated}</p>
-            </div>
-          )}
-        </div>
+    <div className="min-h-screen bg-slate-950 text-slate-100">
+      <div className="mx-auto max-w-7xl px-4 py-8">
+        <header className="mb-8">
+          <h1 className="text-4xl font-bold">Krish Agent</h1>
+          <p className="mt-2 text-slate-400">AI-powered trading dashboard with portfolio and trade tracking.</p>
+        </header>
 
-        {/* Loading State */}
-        {loading && (
-          <div className="flex items-center justify-center py-12">
-            <div className="text-center">
-              <div className="inline-block animate-spin">
-                <div className="h-12 w-12 border-4 border-gray-600 border-t-blue-400 rounded-full"></div>
+        {renderTabs()}
+
+        {(message || error) && (
+          <div
+            className={`mb-6 rounded-2xl border p-4 text-sm shadow-lg ${
+              error ? 'border-rose-500 bg-rose-950/60' : 'border-emerald-500 bg-emerald-950/60'
+            }`}
+          >
+            <p className={error ? 'text-rose-200' : 'text-emerald-200'}>{error ?? message}</p>
+          </div>
+        )}
+
+        {activeTab === 'analysis' && (
+          <section>
+            <div className="mb-4 flex items-center justify-between gap-4 rounded-3xl bg-slate-900 px-5 py-4 shadow-lg shadow-slate-950/30">
+              <div>
+                <p className="text-sm uppercase tracking-[0.2em] text-slate-500">Analysis</p>
+                <h2 className="mt-2 text-2xl font-semibold">Live signal feed</h2>
               </div>
-              <p className="text-gray-400 mt-4 text-lg">Loading signals...</p>
+              <button
+                onClick={fetchAnalysis}
+                className="rounded-full bg-slate-200 px-4 py-2 text-slate-950 transition hover:bg-slate-300"
+              >
+                Refresh
+              </button>
             </div>
-          </div>
+
+            {loading && <div className="rounded-3xl bg-slate-900 p-8 text-center text-slate-400">Loading analysis...</div>}
+
+            {!loading && error && <div className="rounded-3xl bg-rose-950 p-6 text-slate-200">{error}</div>}
+
+            {!loading && !error && analysis.length === 0 && (
+              <div className="rounded-3xl bg-slate-900 p-8 text-center text-slate-400">No analysis results yet.</div>
+            )}
+
+            {!loading && !error && analysis.length > 0 && (
+              <div className="overflow-hidden rounded-3xl border border-slate-800 bg-slate-900 shadow-lg shadow-slate-950/40">
+                <table className="w-full border-collapse text-left">
+                  <thead className="bg-slate-950/80 text-slate-400">
+                    <tr>
+                      <th className="px-4 py-3 text-sm font-semibold">Symbol</th>
+                      <th className="px-4 py-3 text-sm font-semibold">Price</th>
+                      <th className="px-4 py-3 text-sm font-semibold">RSI</th>
+                      <th className="px-4 py-3 text-sm font-semibold">Trend</th>
+                      <th className="px-4 py-3 text-sm font-semibold">Action</th>
+                      <th className="px-4 py-3 text-sm font-semibold">Confidence</th>
+                      <th className="px-4 py-3 text-sm font-semibold">Reason</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {analysis.map((item) => (
+                      <tr key={item.symbol} className="border-t border-slate-800 hover:bg-slate-950/80">
+                        <td className="px-4 py-4 font-semibold text-white">{item.symbol}</td>
+                        <td className="px-4 py-4 text-slate-300">${item.price.toFixed(2)}</td>
+                        <td className="px-4 py-4 text-slate-300">{item.rsi.toFixed(1)}</td>
+                        <td className="px-4 py-4">
+                          <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
+                            item.trend === 'up' ? 'bg-emerald-500/15 text-emerald-300' : 'bg-rose-500/15 text-rose-300'
+                          }`}>
+                            {item.trend.toUpperCase()}
+                          </span>
+                        </td>
+                        <td className="px-4 py-4">
+                          <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${
+                            item.action === 'buy_watch'
+                              ? 'bg-emerald-500/15 text-emerald-300'
+                              : item.action === 'sell_watch'
+                              ? 'bg-rose-500/15 text-rose-300'
+                              : 'bg-amber-500/15 text-amber-300'
+                          }`}>
+                            {item.action.replace(/_/g, ' ').toUpperCase()}
+                          </span>
+                        </td>
+                        <td className="px-4 py-4 text-slate-300">{item.confidence}%</td>
+                        <td className="px-4 py-4 text-slate-400">{item.reason}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
         )}
 
-        {/* Error State */}
-        {error && !loading && (
-          <div className="bg-red-950/40 border border-red-700/50 rounded-lg p-4 mb-6">
-            <p className="text-red-400 text-sm">{error}</p>
-          </div>
-        )}
+        {activeTab === 'portfolio' && (
+          <section>
+            <div className="grid gap-6 lg:grid-cols-[1.2fr_1fr]">
+              <div className="rounded-3xl border border-slate-800 bg-slate-900 p-6 shadow-lg shadow-slate-950/40">
+                <h2 className="text-2xl font-semibold">Add Portfolio Position</h2>
+                <p className="mt-2 text-sm text-slate-400">Track your open positions and risk parameters.</p>
 
-        {/* Table */}
-        {!loading && !error && data.length > 0 && (
-          <div className="overflow-hidden rounded-lg border border-gray-700/50 shadow-lg">
-            <table className="w-full">
-              {/* Table Header */}
-              <thead>
-                <tr className="border-b border-gray-700/50" style={{ backgroundColor: '#111827' }}>
-                  <th className="px-6 py-4 text-left text-sm font-semibold text-gray-300">Symbol</th>
-                  <th className="px-6 py-4 text-left text-sm font-semibold text-gray-300">Price</th>
-                  <th className="px-6 py-4 text-left text-sm font-semibold text-gray-300">RSI</th>
-                  <th className="px-6 py-4 text-left text-sm font-semibold text-gray-300">Trend</th>
-                  <th className="px-6 py-4 text-left text-sm font-semibold text-gray-300">Action</th>
-                  <th className="px-6 py-4 text-left text-sm font-semibold text-gray-300">Confidence</th>
-                  <th className="px-6 py-4 text-left text-sm font-semibold text-gray-300">Reason</th>
-                </tr>
-              </thead>
+                <form onSubmit={submitPortfolio} className="mt-6 space-y-4">
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <label className="block text-sm text-slate-300">
+                      Symbol
+                      <input
+                        required
+                        value={portfolioForm.symbol}
+                        onChange={(e) => setPortfolioForm({ ...portfolioForm, symbol: e.target.value.toUpperCase() })}
+                        className="mt-2 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-slate-100 outline-none focus:border-slate-500"
+                      />
+                    </label>
+                    <label className="block text-sm text-slate-300">
+                      Quantity
+                      <input
+                        type="number"
+                        min="0"
+                        step="any"
+                        required
+                        value={portfolioForm.quantity}
+                        onChange={(e) => setPortfolioForm({ ...portfolioForm, quantity: Number(e.target.value) })}
+                        className="mt-2 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-slate-100 outline-none focus:border-slate-500"
+                      />
+                    </label>
+                    <label className="block text-sm text-slate-300">
+                      Entry Price
+                      <input
+                        type="number"
+                        min="0"
+                        step="any"
+                        required
+                        value={portfolioForm.entryPrice}
+                        onChange={(e) => setPortfolioForm({ ...portfolioForm, entryPrice: Number(e.target.value) })}
+                        className="mt-2 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-slate-100 outline-none focus:border-slate-500"
+                      />
+                    </label>
+                    <label className="block text-sm text-slate-300">
+                      Entry Date
+                      <input
+                        type="date"
+                        required
+                        value={portfolioForm.entryDate}
+                        onChange={(e) => setPortfolioForm({ ...portfolioForm, entryDate: e.target.value })}
+                        className="mt-2 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-slate-100 outline-none focus:border-slate-500"
+                      />
+                    </label>
+                  </div>
 
-              {/* Table Body */}
-              <tbody>
-                {data.map((item, index) => (
-                  <tr
-                    key={index}
-                    className="border-b border-gray-700/30 hover:bg-gray-800/40 transition-all duration-200 ease-in-out"
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <label className="block text-sm text-slate-300">
+                      Stop Loss
+                      <input
+                        type="number"
+                        min="0"
+                        step="any"
+                        value={portfolioForm.stopLoss}
+                        onChange={(e) => setPortfolioForm({ ...portfolioForm, stopLoss: e.target.value })}
+                        className="mt-2 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-slate-100 outline-none focus:border-slate-500"
+                      />
+                    </label>
+                    <label className="block text-sm text-slate-300">
+                      Take Profit
+                      <input
+                        type="number"
+                        min="0"
+                        step="any"
+                        value={portfolioForm.takeProfit}
+                        onChange={(e) => setPortfolioForm({ ...portfolioForm, takeProfit: e.target.value })}
+                        className="mt-2 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-slate-100 outline-none focus:border-slate-500"
+                      />
+                    </label>
+                  </div>
+
+                  <label className="block text-sm text-slate-300">
+                    Notes
+                    <textarea
+                      value={portfolioForm.notes}
+                      onChange={(e) => setPortfolioForm({ ...portfolioForm, notes: e.target.value })}
+                      className="mt-2 w-full rounded-3xl border border-slate-700 bg-slate-950 px-4 py-3 text-slate-100 outline-none focus:border-slate-500"
+                      rows={4}
+                    />
+                  </label>
+
+                  <button
+                    type="submit"
+                    className="inline-flex items-center justify-center rounded-full bg-emerald-500 px-6 py-3 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400"
                   >
-                    {/* Symbol */}
-                    <td className="px-6 py-4">
-                      <span className="font-semibold text-white">{item.symbol}</span>
-                    </td>
+                    Add Position
+                  </button>
+                </form>
+              </div>
 
-                    {/* Price */}
-                    <td className="px-6 py-4">
-                      <span className="text-gray-300">${item.price?.toFixed(2) || 'N/A'}</span>
-                    </td>
+              <div className="rounded-3xl border border-slate-800 bg-slate-900 p-6 shadow-lg shadow-slate-950/40">
+                <h2 className="text-2xl font-semibold">Open Portfolio</h2>
+                <p className="mt-2 text-sm text-slate-400">Manage your tracked holdings and exit alerts.</p>
 
-                    {/* RSI */}
-                    <td className="px-6 py-4">
-                      <span className="text-gray-300">{item.rsi?.toFixed(2) || 'N/A'}</span>
-                    </td>
-
-                    {/* Trend */}
-                    <td className="px-6 py-4">
-                      <span
-                        className={`px-3 py-1 rounded-full text-sm font-medium ${
-                          item.trend === 'up'
-                            ? 'text-green-400 bg-green-900/20'
-                            : 'text-red-400 bg-red-900/20'
-                        }`}
-                      >
-                        {item.trend?.toUpperCase() || 'N/A'}
-                      </span>
-                    </td>
-
-                    {/* Action */}
-                    <td className="px-6 py-4 font-bold">
-                      <span
-                        className={`px-3 py-1 rounded-full text-sm font-bold ${getActionColor(
-                          item.action
-                        )} ${getActionBgColor(item.action)}`}
-                      >
-                        {item.action?.replace(/_/g, ' ').toUpperCase() || 'N/A'}
-                      </span>
-                    </td>
-
-                    {/* Confidence */}
-                    <td className="px-6 py-4">
-                      <div className="flex items-center">
-                        <div className="w-16 bg-gray-700 rounded-full h-2 mr-2">
-                          <div
-                            className="bg-blue-500 h-2 rounded-full"
-                            style={{ width: `${item.confidence || 0}%` }}
-                          ></div>
+                {loading ? (
+                  <div className="mt-6 rounded-3xl bg-slate-950 p-6 text-center text-slate-400">Loading portfolio...</div>
+                ) : portfolio.length === 0 ? (
+                  <div className="mt-6 rounded-3xl bg-slate-950 p-6 text-center text-slate-400">No active positions found.</div>
+                ) : (
+                  <div className="mt-6 space-y-4">
+                    {portfolio.map((position) => (
+                      <div key={position.id} className="rounded-3xl border border-slate-800 bg-slate-950 p-4">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <div>
+                            <p className="text-sm text-slate-400">{position.symbol}</p>
+                            <p className="text-xl font-semibold text-white">{position.quantity} shares</p>
+                          </div>
+                          <button
+                            onClick={() => deletePortfolioPosition(position.id)}
+                            className="rounded-full bg-rose-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-rose-400"
+                          >
+                            Remove
+                          </button>
                         </div>
-                        <span className="text-gray-300 text-sm">{item.confidence || 0}%</span>
+                        <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                          <div className="text-sm text-slate-400">Entry price: ${position.entryPrice.toFixed(2)}</div>
+                          <div className="text-sm text-slate-400">Date: {new Date(position.entryDate).toLocaleDateString()}</div>
+                          <div className="text-sm text-slate-400">Stop loss: {position.stopLoss ? `$${position.stopLoss.toFixed(2)}` : '—'}</div>
+                          <div className="text-sm text-slate-400">Take profit: {position.takeProfit ? `$${position.takeProfit.toFixed(2)}` : '—'}</div>
+                        </div>
+                        {position.notes && <p className="mt-4 text-sm text-slate-300">Notes: {position.notes}</p>}
                       </div>
-                    </td>
-
-                    {/* Reason */}
-                    <td className="px-6 py-4">
-                      <span className="text-gray-400 text-sm">{item.reason || 'N/A'}</span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
         )}
 
-        {/* Empty State */}
-        {!loading && !error && data.length === 0 && (
-          <div className="text-center py-12">
-            <p className="text-gray-500 text-lg">No data available</p>
-          </div>
+        {activeTab === 'alerts' && (
+          <section>
+            <div className="grid gap-6 lg:grid-cols-[1.2fr_1fr]">
+              <div className="rounded-3xl border border-slate-800 bg-slate-900 p-6 shadow-lg shadow-slate-950/40">
+                <div className="mb-4 flex items-center justify-between gap-4">
+                  <div>
+                    <h2 className="text-2xl font-semibold">{editingAlertId ? 'Edit Alert' : 'Create Alert'}</h2>
+                    <p className="mt-2 text-sm text-slate-400">Receive notifications when market conditions are met.</p>
+                  </div>
+                  <div className="flex gap-2">
+                    {editingAlertId && (
+                      <button
+                        type="button"
+                        onClick={cancelEditAlert}
+                        className="rounded-full bg-slate-700 px-4 py-2 text-sm font-semibold text-slate-100 transition hover:bg-slate-600"
+                      >
+                        Cancel
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={fetchAlerts}
+                      className="rounded-full bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-slate-300"
+                    >
+                      Refresh
+                    </button>
+                  </div>
+                </div>
+
+                <form onSubmit={submitAlert} className="mt-6 space-y-4">
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <label className="block text-sm text-slate-300">
+                      Symbol
+                      <input
+                        required
+                        value={alertForm.symbol}
+                        onChange={(e) => setAlertForm({ ...alertForm, symbol: e.target.value.toUpperCase() })}
+                        className="mt-2 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-slate-100 outline-none focus:border-slate-500"
+                      />
+                    </label>
+                    <label className="block text-sm text-slate-300">
+                      Alert Type
+                      <select
+                        required
+                        value={alertForm.alertType}
+                        onChange={(e) => setAlertForm({ ...alertForm, alertType: e.target.value })}
+                        className="mt-2 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-slate-100 outline-none focus:border-slate-500"
+                      >
+                        <option value="price_above">Price Above</option>
+                        <option value="price_below">Price Below</option>
+                        <option value="rsi_above">RSI Above</option>
+                        <option value="rsi_below">RSI Below</option>
+                      </select>
+                    </label>
+                  </div>
+
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <label className="block text-sm text-slate-300">
+                      Threshold
+                      <input
+                        type="number"
+                        min="0"
+                        step="any"
+                        required
+                        value={alertForm.threshold}
+                        onChange={(e) => setAlertForm({ ...alertForm, threshold: Number(e.target.value) })}
+                        className="mt-2 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-slate-100 outline-none focus:border-slate-500"
+                      />
+                    </label>
+                    <label className="block text-sm text-slate-300">
+                      Condition
+                      <input
+                        value={alertForm.condition}
+                        onChange={(e) => setAlertForm({ ...alertForm, condition: e.target.value })}
+                        className="mt-2 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-slate-100 outline-none focus:border-slate-500"
+                      />
+                    </label>
+                  </div>
+
+                  <label className="block text-sm text-slate-300">
+                    Expires At
+                    <input
+                      type="date"
+                      value={alertForm.expiresAt}
+                      onChange={(e) => setAlertForm({ ...alertForm, expiresAt: e.target.value })}
+                      className="mt-2 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-slate-100 outline-none focus:border-slate-500"
+                    />
+                  </label>
+
+                  <button
+                    type="submit"
+                    className="inline-flex items-center justify-center rounded-full bg-emerald-500 px-6 py-3 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400"
+                  >
+                    {editingAlertId ? 'Save Alert' : 'Create Alert'}
+                  </button>
+                </form>
+              </div>
+
+              <div className="rounded-3xl border border-slate-800 bg-slate-900 p-6 shadow-lg shadow-slate-950/40">
+                <h2 className="text-2xl font-semibold">Alerts Overview</h2>
+                <p className="mt-2 text-sm text-slate-400">Monitor active and triggered alerts in one place.</p>
+
+                {loading ? (
+                  <div className="mt-6 rounded-3xl bg-slate-950 p-6 text-center text-slate-400">Loading alerts...</div>
+                ) : alerts.length === 0 ? (
+                  <div className="mt-6 rounded-3xl bg-slate-950 p-6 text-center text-slate-400">No alerts configured yet.</div>
+                ) : (
+                  <div className="mt-6 space-y-8">
+                    <div>
+                      <h3 className="text-xl font-semibold text-white">Active Alerts</h3>
+                      {activeAlerts.length === 0 ? (
+                        <div className="mt-4 rounded-3xl bg-slate-950 p-6 text-sm text-slate-400">No active alerts.</div>
+                      ) : (
+                        <div className="mt-4 space-y-4">
+                          {activeAlerts.map((alert) => (
+                            <div key={alert.id} className="rounded-3xl border border-slate-800 bg-slate-950 p-4">
+                              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                <div>
+                                  <p className="text-sm text-slate-400">{alert.symbol}</p>
+                                  <p className="text-xl font-semibold text-white">{alert.alertType.replace(/_/g, ' ').toUpperCase()}</p>
+                                </div>
+                                <div className="flex flex-wrap gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => startEditAlert(alert)}
+                                    className="rounded-full bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-slate-300"
+                                  >
+                                    Edit
+                                  </button>
+                                  <button
+                                    onClick={() => deleteAlert(alert.id)}
+                                    className="rounded-full bg-rose-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-rose-400"
+                                  >
+                                    Remove
+                                  </button>
+                                </div>
+                              </div>
+                              <div className="mt-4 grid gap-2 sm:grid-cols-2 text-sm text-slate-400">
+                                <div>Threshold: {alert.threshold}</div>
+                                <div>Condition: {alert.condition || 'None'}</div>
+                                <div>Status: {alert.isActive ? 'Active' : 'Inactive'}</div>
+                                <div>Triggered: {alert.isTriggered ? 'Yes' : 'No'}</div>
+                              </div>
+                              <div className="mt-3 text-sm text-slate-400">
+                                Expires: {alert.expiresAt ? new Date(alert.expiresAt).toLocaleDateString() : 'Never'}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <div>
+                      <h3 className="text-xl font-semibold text-white">Triggered Alerts</h3>
+                      {triggeredAlerts.length === 0 ? (
+                        <div className="mt-4 rounded-3xl bg-slate-950 p-6 text-sm text-slate-400">No triggered alerts yet.</div>
+                      ) : (
+                        <div className="mt-4 space-y-4">
+                          {triggeredAlerts.map((alert) => (
+                            <div key={alert.id} className="rounded-3xl border border-slate-800 bg-slate-950 p-4">
+                              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                <div>
+                                  <p className="text-sm text-slate-400">{alert.symbol}</p>
+                                  <p className="text-xl font-semibold text-white">{alert.alertType.replace(/_/g, ' ').toUpperCase()}</p>
+                                </div>
+                                <div className="flex flex-wrap gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => startEditAlert(alert)}
+                                    className="rounded-full bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-slate-300"
+                                  >
+                                    Edit
+                                  </button>
+                                  <button
+                                    onClick={() => deleteAlert(alert.id)}
+                                    className="rounded-full bg-rose-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-rose-400"
+                                  >
+                                    Remove
+                                  </button>
+                                </div>
+                              </div>
+                              <div className="mt-4 grid gap-2 sm:grid-cols-2 text-sm text-slate-400">
+                                <div>Threshold: {alert.threshold}</div>
+                                <div>Condition: {alert.condition || 'None'}</div>
+                                <div>Triggered At: {alert.triggeredAt ? new Date(alert.triggeredAt).toLocaleString() : 'Unknown'}</div>
+                                <div>Expires: {alert.expiresAt ? new Date(alert.expiresAt).toLocaleDateString() : 'Never'}</div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
+        )}
+
+        {activeTab === 'trades' && (
+          <section>
+            <div className="grid gap-6 lg:grid-cols-[1.2fr_1fr]">
+              <div className="rounded-3xl border border-slate-800 bg-slate-900 p-6 shadow-lg shadow-slate-950/40">
+                <h2 className="text-2xl font-semibold">Log Trade</h2>
+                <p className="mt-2 text-sm text-slate-400">Capture entry and exit details for each trade.</p>
+
+                <form onSubmit={submitTrade} className="mt-6 space-y-4">
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <label className="block text-sm text-slate-300">
+                      Symbol
+                      <input
+                        required
+                        value={tradeForm.symbol}
+                        onChange={(e) => setTradeForm({ ...tradeForm, symbol: e.target.value.toUpperCase() })}
+                        className="mt-2 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-slate-100 outline-none focus:border-slate-500"
+                      />
+                    </label>
+                    <label className="block text-sm text-slate-300">
+                      Side
+                      <select
+                        required
+                        value={tradeForm.side}
+                        onChange={(e) => setTradeForm({ ...tradeForm, side: e.target.value })}
+                        className="mt-2 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-slate-100 outline-none focus:border-slate-500"
+                      >
+                        <option value="buy">Buy</option>
+                        <option value="sell">Sell</option>
+                      </select>
+                    </label>
+                    <label className="block text-sm text-slate-300">
+                      Quantity
+                      <input
+                        type="number"
+                        min="0"
+                        step="any"
+                        required
+                        value={tradeForm.quantity}
+                        onChange={(e) => setTradeForm({ ...tradeForm, quantity: Number(e.target.value) })}
+                        className="mt-2 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-slate-100 outline-none focus:border-slate-500"
+                      />
+                    </label>
+                    <label className="block text-sm text-slate-300">
+                      Entry Price
+                      <input
+                        type="number"
+                        min="0"
+                        step="any"
+                        required
+                        value={tradeForm.entryPrice}
+                        onChange={(e) => setTradeForm({ ...tradeForm, entryPrice: Number(e.target.value) })}
+                        className="mt-2 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-slate-100 outline-none focus:border-slate-500"
+                      />
+                    </label>
+                  </div>
+
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <label className="block text-sm text-slate-300">
+                      Entry Date
+                      <input
+                        type="date"
+                        required
+                        value={tradeForm.entryDate}
+                        onChange={(e) => setTradeForm({ ...tradeForm, entryDate: e.target.value })}
+                        className="mt-2 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-slate-100 outline-none focus:border-slate-500"
+                      />
+                    </label>
+                    <label className="block text-sm text-slate-300">
+                      Exit Price
+                      <input
+                        type="number"
+                        min="0"
+                        step="any"
+                        value={tradeForm.exitPrice}
+                        onChange={(e) => setTradeForm({ ...tradeForm, exitPrice: e.target.value })}
+                        className="mt-2 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-slate-100 outline-none focus:border-slate-500"
+                      />
+                    </label>
+                  </div>
+
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <label className="block text-sm text-slate-300">
+                      PnL
+                      <input
+                        type="number"
+                        step="any"
+                        value={tradeForm.pnl}
+                        onChange={(e) => setTradeForm({ ...tradeForm, pnl: e.target.value })}
+                        className="mt-2 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-slate-100 outline-none focus:border-slate-500"
+                      />
+                    </label>
+                    <label className="block text-sm text-slate-300">
+                      PnL %
+                      <input
+                        type="number"
+                        step="any"
+                        value={tradeForm.pnlPercent}
+                        onChange={(e) => setTradeForm({ ...tradeForm, pnlPercent: e.target.value })}
+                        className="mt-2 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-slate-100 outline-none focus:border-slate-500"
+                      />
+                    </label>
+                  </div>
+
+                  <label className="block text-sm text-slate-300">
+                    Exit Date
+                    <input
+                      type="date"
+                      value={tradeForm.exitDate}
+                      onChange={(e) => setTradeForm({ ...tradeForm, exitDate: e.target.value })}
+                      className="mt-2 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-slate-100 outline-none focus:border-slate-500"
+                    />
+                  </label>
+
+                  <label className="block text-sm text-slate-300">
+                    Exit Reason
+                    <textarea
+                      value={tradeForm.exitReason}
+                      onChange={(e) => setTradeForm({ ...tradeForm, exitReason: e.target.value })}
+                      className="mt-2 w-full rounded-3xl border border-slate-700 bg-slate-950 px-4 py-3 text-slate-100 outline-none focus:border-slate-500"
+                      rows={3}
+                    />
+                  </label>
+
+                  <label className="block text-sm text-slate-300">
+                    Notes
+                    <textarea
+                      value={tradeForm.notes}
+                      onChange={(e) => setTradeForm({ ...tradeForm, notes: e.target.value })}
+                      className="mt-2 w-full rounded-3xl border border-slate-700 bg-slate-950 px-4 py-3 text-slate-100 outline-none focus:border-slate-500"
+                      rows={3}
+                    />
+                  </label>
+
+                  <button
+                    type="submit"
+                    className="inline-flex items-center justify-center rounded-full bg-emerald-500 px-6 py-3 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400"
+                  >
+                    Save Trade
+                  </button>
+                </form>
+              </div>
+
+              <div className="rounded-3xl border border-slate-800 bg-slate-900 p-6 shadow-lg shadow-slate-950/40">
+                <h2 className="text-2xl font-semibold">Trade Log</h2>
+                <p className="mt-2 text-sm text-slate-400">Review trade performance and history.</p>
+
+                {loading ? (
+                  <div className="mt-6 rounded-3xl bg-slate-950 p-6 text-center text-slate-400">Loading trades...</div>
+                ) : trades.length === 0 ? (
+                  <div className="mt-6 rounded-3xl bg-slate-950 p-6 text-center text-slate-400">No trades logged yet.</div>
+                ) : (
+                  <div className="mt-6 space-y-4">
+                    {trades.map((trade) => (
+                      <div key={trade.id} className="rounded-3xl border border-slate-800 bg-slate-950 p-4">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <div>
+                            <p className="text-sm text-slate-400">{trade.symbol} • {trade.side.toUpperCase()}</p>
+                            <p className="text-xl font-semibold text-white">{trade.quantity} @ ${trade.entryPrice.toFixed(2)}</p>
+                          </div>
+                          <button
+                            onClick={() => deleteTrade(trade.id)}
+                            className="rounded-full bg-rose-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-rose-400"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                        <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                          <div className="text-sm text-slate-400">Entry: {new Date(trade.entryDate).toLocaleDateString()}</div>
+                          <div className="text-sm text-slate-400">Exit: {trade.exitDate ? new Date(trade.exitDate).toLocaleDateString() : 'Open'}</div>
+                          <div className="text-sm text-slate-400">PnL: {trade.pnl !== null && trade.pnl !== undefined ? `$${trade.pnl.toFixed(2)}` : '—'}</div>
+                          <div className="text-sm text-slate-400">PnL %: {trade.pnlPercent !== null && trade.pnlPercent !== undefined ? `${trade.pnlPercent.toFixed(2)}%` : '—'}</div>
+                        </div>
+                        {trade.exitReason && <p className="mt-4 text-sm text-slate-300">Exit: {trade.exitReason}</p>}
+                        {trade.notes && <p className="mt-2 text-sm text-slate-300">Notes: {trade.notes}</p>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
         )}
       </div>
     </div>

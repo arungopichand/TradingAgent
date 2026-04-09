@@ -440,7 +440,7 @@ namespace KrishAgent.Controllers
                             Price = stockData.Price,
                             Rsi = stockData.Rsi,
                             Trend = NormalizeTrend(aiItem.Trend, stockData.Trend),
-                            Confidence = Math.Clamp(aiItem.Confidence, 0, 100),
+                            Confidence = NormalizeConfidence(aiItem.Confidence),
                             Reason = string.IsNullOrWhiteSpace(aiItem.Reason) ? "No reason provided." : aiItem.Reason.Trim(),
                             Action = NormalizeAction(aiItem.Action)
                         });
@@ -530,6 +530,12 @@ namespace KrishAgent.Controllers
                 "down" => "down",
                 _ => fallbackTrend
             };
+        }
+
+        private static int NormalizeConfidence(decimal confidence)
+        {
+            var rounded = decimal.Round(confidence, 0, MidpointRounding.AwayFromZero);
+            return decimal.ToInt32(decimal.Clamp(rounded, 0, 100));
         }
     }
 }
