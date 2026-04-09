@@ -9,6 +9,7 @@ This repo is set up for:
 ### 1. Backend on Render
 
 Render uses the root [`render.yaml`](/c:/Users/arung/TradingAgent/render.yaml) file and the backend Dockerfile at [Dockerfile](/c:/Users/arung/TradingAgent/KrishAgent/Dockerfile).
+The checked-in Blueprint is pinned to the `version-4` branch so it deploys the latest hosted-ready code instead of the repo's older default branch.
 
 Create a new Render Blueprint or Web Service from the GitHub repo and set these environment variables:
 
@@ -44,6 +45,7 @@ This backend supports both:
 ### 3. Frontend on Vercel
 
 Import the repo into Vercel and set the project root to `krishagentui`.
+Set the Production Branch to `version-4` so Vercel tracks the same branch as the Render backend.
 
 Set this environment variable in Vercel:
 

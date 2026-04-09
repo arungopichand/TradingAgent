@@ -2,10 +2,12 @@ services:
   - type: web
     name: krish-agent-api
     runtime: docker
+    branch: version-4
     rootDir: KrishAgent
-    dockerfilePath: ./Dockerfile
+    dockerfilePath: ./KrishAgent/Dockerfile
+    dockerContext: ./KrishAgent
     plan: free
-    autoDeploy: true
+    autoDeployTrigger: commit
     healthCheckPath: /api/test
     envVars:
       - key: ASPNETCORE_ENVIRONMENT
