@@ -1,7 +1,9 @@
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
-using Microsoft.Extensions.Configuration;
+using KrishAgent.Configuration;
+using Microsoft.Extensions.Options;
 
 namespace KrishAgent.Services
 {
@@ -13,18 +15,23 @@ namespace KrishAgent.Services
         };
 
         private readonly HttpClient _httpClient;
-        private readonly string? _apiKey;
-        private readonly string _model;
+        private readonly IOptionsMonitor<OpenAiOptions> _options;
 
-        public AIService(HttpClient httpClient, IConfiguration configuration)
+        public string ConfiguredModel =>
+            string.IsNullOrWhiteSpace(_options.CurrentValue.Model)
+                ? OpenAiOptions.DefaultModel
+                : _options.CurrentValue.Model.Trim();
+
+        private string ApiKey => _options.CurrentValue.ApiKey?.Trim() ?? string.Empty;
+
+        public AIService(HttpClient httpClient, IOptionsMonitor<OpenAiOptions> options)
         {
             _httpClient = httpClient;
-            _apiKey = configuration["OpenAI:ApiKey"]?.Trim();
-            _model = configuration["OpenAI:Model"]?.Trim() ?? "gpt-3.5-turbo";
+            _options = options;
             _httpClient.Timeout = TimeSpan.FromSeconds(30);
         }
 
-        public async Task<string> Analyze(string input)
+        public async Task<string> Analyze(string input, CancellationToken cancellationToken = default)
         {
             EnsureConfigured();
 
@@ -50,7 +57,7 @@ The response must be valid JSON only, with no surrounding explanation text.
 
             var requestBody = new
             {
-                model = _model,
+                model = ConfiguredModel,
                 messages = new[]
                 {
                     new
@@ -71,18 +78,18 @@ The response must be valid JSON only, with no surrounding explanation text.
             {
                 Content = content
             };
-            request.Headers.Add("Authorization", $"Bearer {_apiKey}");
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", ApiKey);
 
             try
             {
-                var response = await _httpClient.SendAsync(request);
+                var response = await _httpClient.SendAsync(request, cancellationToken);
                 
                 if (!response.IsSuccessStatusCode)
                 {
                     throw new Exception($"OpenAI API error: {response.StatusCode} - {response.ReasonPhrase}");
                 }
                 
-                var responseJson = await response.Content.ReadAsStringAsync();
+                var responseJson = await response.Content.ReadAsStringAsync(cancellationToken);
                 var responseObj = JsonSerializer.Deserialize<OpenAiChatCompletionResponse>(responseJson, JsonOptions);
                 var aiResponse = responseObj?.Choices?.FirstOrDefault()?.Message?.Content?.Trim();
                 
@@ -97,6 +104,10 @@ The response must be valid JSON only, with no surrounding explanation text.
             {
                 throw new Exception($"Failed to call OpenAI API: Network error - {ex.Message}");
             }
+            catch (TaskCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
             catch (TaskCanceledException ex)
             {
                 throw new Exception($"Failed to call OpenAI API: Request timeout - {ex.Message}");
@@ -109,7 +120,7 @@ The response must be valid JSON only, with no surrounding explanation text.
 
         private void EnsureConfigured()
         {
-            if (!string.IsNullOrWhiteSpace(_apiKey))
+            if (!string.IsNullOrWhiteSpace(ApiKey))
             {
                 return;
             }

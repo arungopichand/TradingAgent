@@ -55,6 +55,7 @@ namespace KrishAgent.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error saving stock prices to database");
+                throw;
             }
         }
 
@@ -69,6 +70,7 @@ namespace KrishAgent.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error saving analysis history to database");
+                throw;
             }
         }
 
@@ -142,6 +144,7 @@ namespace KrishAgent.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, $"Error updating alert {alert.Id}");
+                throw;
             }
         }
 
@@ -183,6 +186,7 @@ namespace KrishAgent.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error creating alert");
+                throw;
             }
         }
 
@@ -196,6 +200,7 @@ namespace KrishAgent.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, $"Error deleting alert {alert.Id}");
+                throw;
             }
         }
 
@@ -238,6 +243,7 @@ namespace KrishAgent.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error creating portfolio position");
+                throw;
             }
         }
 
@@ -251,6 +257,7 @@ namespace KrishAgent.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, $"Error updating portfolio position {position.Id}");
+                throw;
             }
         }
 
@@ -264,6 +271,7 @@ namespace KrishAgent.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, $"Error deleting portfolio position {position.Id}");
+                throw;
             }
         }
 
@@ -306,6 +314,7 @@ namespace KrishAgent.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error creating trade");
+                throw;
             }
         }
 
@@ -319,6 +328,7 @@ namespace KrishAgent.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, $"Error updating trade {trade.Id}");
+                throw;
             }
         }
 
@@ -332,6 +342,7 @@ namespace KrishAgent.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, $"Error deleting trade {trade.Id}");
+                throw;
             }
         }
     }

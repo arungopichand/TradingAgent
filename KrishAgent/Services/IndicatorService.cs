@@ -48,31 +48,35 @@ namespace KrishAgent.Services
 
         public decimal CalculateRsi(List<Quote> quotes)
         {
-            if (quotes == null || quotes.Count < 3)
+            var rsiResults = CalculateRsiSeries(quotes);
+            if (!rsiResults.Any())
             {
-                // Not enough data for RSI calculation
                 return 0;
+            }
+
+            var lastRsi = rsiResults.LastOrDefault(result => result.Rsi.HasValue)?.Rsi;
+            if (lastRsi.HasValue)
+            {
+                return (decimal)lastRsi.Value;
+            }
+
+            return 0;
+        }
+
+        public List<RsiResult> CalculateRsiSeries(List<Quote> quotes, int lookbackPeriods = 2)
+        {
+            if (quotes == null || quotes.Count < lookbackPeriods + 1)
+            {
+                return [];
             }
 
             try
             {
-                var rsiResults = quotes.GetRsi(2).ToList();
-                if (!rsiResults.Any())
-                {
-                    return 0;
-                }
-
-                var lastRsi = rsiResults.LastOrDefault(result => result.Rsi.HasValue)?.Rsi;
-                if (lastRsi.HasValue)
-                {
-                    return (decimal)lastRsi.Value;
-                }
-
-                return 0;
+                return quotes.GetRsi(lookbackPeriods).ToList();
             }
             catch
             {
-                return 0;
+                return [];
             }
         }
 
