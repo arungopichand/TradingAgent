@@ -28,6 +28,8 @@ builder.Services.AddHttpClient<MarketService>();
 builder.Services.AddScoped<IndicatorService>();
 builder.Services.AddHttpClient<AIService>();
 builder.Services.AddScoped<DataService>();
+builder.Services.AddScoped<IntradayTradingService>();
+builder.Services.AddScoped<PennyStockTradingService>();
 builder.Services.AddHostedService<TradingDataService>();
 builder.Services.AddDbContext<KrishAgent.Data.TradingContext>(options =>
     options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection")));
