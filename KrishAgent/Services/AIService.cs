@@ -27,11 +27,16 @@ namespace KrishAgent.Services
         private readonly ILogger<AIService> _logger;
 
         public string ConfiguredModel =>
-            string.IsNullOrWhiteSpace(_options.CurrentValue.Model)
-                ? OpenAiOptions.DefaultModel
-                : _options.CurrentValue.Model.Trim();
+            ResolveConfiguredValue(
+                _options.CurrentValue.Model,
+                "OpenAI__Model",
+                "OPENAI_MODEL",
+                OpenAiOptions.DefaultModel);
 
-        private string ApiKey => _options.CurrentValue.ApiKey?.Trim() ?? string.Empty;
+        private string ApiKey => ResolveConfiguredValue(
+            _options.CurrentValue.ApiKey,
+            "OpenAI__ApiKey",
+            "OPENAI_API_KEY");
 
         public AIService(HttpClient httpClient, NodeBridgeService nodeBridgeService, IOptionsMonitor<OpenAiOptions> options, ILogger<AIService> logger)
         {
@@ -40,6 +45,36 @@ namespace KrishAgent.Services
             _options = options;
             _logger = logger;
             _httpClient.Timeout = TimeSpan.FromSeconds(30);
+        }
+
+        private static string ResolveConfiguredValue(string? configuredValue, params string[] envKeys)
+        {
+            return ResolveConfiguredValue(configuredValue, envKeys, string.Empty);
+        }
+
+        private static string ResolveConfiguredValue(string? configuredValue, string primaryEnvKey, string secondaryEnvKey, string fallback)
+        {
+            return ResolveConfiguredValue(configuredValue, new[] { primaryEnvKey, secondaryEnvKey }, fallback);
+        }
+
+        private static string ResolveConfiguredValue(string? configuredValue, IEnumerable<string> envKeys, string fallback)
+        {
+            var normalizedConfiguredValue = configuredValue?.Trim();
+            if (!string.IsNullOrWhiteSpace(normalizedConfiguredValue))
+            {
+                return normalizedConfiguredValue;
+            }
+
+            foreach (var envKey in envKeys)
+            {
+                var envValue = Environment.GetEnvironmentVariable(envKey)?.Trim();
+                if (!string.IsNullOrWhiteSpace(envValue))
+                {
+                    return envValue;
+                }
+            }
+
+            return fallback;
         }
 
         public async Task<AiAnalysisResponse> Analyze(IReadOnlyCollection<StockSnapshot> stocks, CancellationToken cancellationToken = default)
