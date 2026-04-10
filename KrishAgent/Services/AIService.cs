@@ -179,6 +179,7 @@ namespace KrishAgent.Services
                     {
                         requestBody.model,
                         requestBody.messages,
+                        reasoning_effort = "minimal",
                         temperature = 0,
                         max_completion_tokens = maxOutputTokens
                     };
@@ -188,6 +189,7 @@ namespace KrishAgent.Services
                 {
                     requestBody.model,
                     requestBody.messages,
+                    reasoning_effort = "minimal",
                     max_completion_tokens = maxOutputTokens
                 };
             }
