@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: trading-agent-api-arungopichand
+    name: trading-backend
     runtime: docker
     branch: main
     rootDir: KrishAgent
@@ -12,6 +12,12 @@ services:
     envVars:
       - key: ASPNETCORE_ENVIRONMENT
         value: Production
+      - key: FINNHUB__APIKEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
       - key: DATABASE_URL
         sync: false
       - key: ConnectionStrings__DefaultConnection

@@ -1,84 +1,80 @@
-## Hosting Plan
+## Deployment
 
-This repo is set up for:
+This repo deploys from the existing folders:
 
-- Frontend: Vercel Hobby
-- Backend: Render free web service
-- Database: Supabase Postgres free tier
+- Backend: `KrishAgent`
+- Frontend: `krishagentui`
+- Source control and CI/CD: GitHub
+- Backend hosting: Render
+- Frontend hosting: Vercel
+- Database: Supabase
 
-### 1. Backend on Render
+The folder names are already wired into the deployment config, so there is no risky physical restructure.
 
-Render uses the root [`render.yaml`](/c:/Users/arung/TradingAgent/render.yaml) file and the backend Dockerfile at [Dockerfile](/c:/Users/arung/TradingAgent/KrishAgent/Dockerfile).
-The checked-in Blueprint is pinned to the `main` branch so production tracks the live branch directly.
+### GitHub secrets
 
-Create a new Render Blueprint or Web Service from the GitHub repo and set these environment variables:
+Add these repository secrets before enabling the workflow:
 
+- `VERCEL_TOKEN`
+- `VERCEL_ORG_ID`
+- `VERCEL_PROJECT_ID`
+- `NEXT_PUBLIC_API_BASE_URL`
+- `RENDER_DEPLOY_HOOK_URL`
+
+Recommended value:
+
+- `VERCEL_ORG_ID=team_Vv199lkQ4BbWWcuFKZK8dmgP`
+- `VERCEL_PROJECT_ID=prj_Tv4AvBBNBjpxQ9RFAxpcHBBsUeN8`
+- `NEXT_PUBLIC_API_BASE_URL=https://trading-backend.onrender.com/api`
+
+Resolved from this workspace:
+
+- GitHub repo: `https://github.com/arungopichand/TradingAgent`
+- Vercel team: `arungopichands-projects`
+- Vercel project: `trading-agent-ui`
+
+### Render backend
+
+Render uses [render.yaml](/c:/Users/arung/TradingAgent/render.yaml) and builds the API from [KrishAgent/Dockerfile](/c:/Users/arung/TradingAgent/KrishAgent/Dockerfile).
+
+Set these environment variables in Render:
+
+- `FINNHUB__APIKEY`
+- `SUPABASE_URL`
+- `SUPABASE_KEY`
 - `DATABASE_URL`
-  Use your Supabase Postgres connection string or URL.
+- `ConnectionStrings__DefaultConnection`
 - `CORS_ALLOWED_ORIGINS`
-  Example: `https://your-app.vercel.app,https://your-custom-domain.com`
-- `Alpaca__ApiKey`
-- `Alpaca__SecretKey`
-- `Alpaca__Feed`
-  Keep `iex` if you want the free market-data feed.
 - `OpenAI__ApiKey`
-  Optional. If omitted, the app falls back to rule-based analysis.
 - `OpenAI__Model`
-  Optional. Default suggestion: `gpt-5-mini`
 
-The app automatically runs EF Core migrations on startup.
+The API already binds to the dynamic Render `PORT`, and the background services are guarded so failed scans do not bring down the process.
 
-### 2. Database on Supabase
+### Vercel frontend
 
-Create a free Supabase project and copy the Postgres connection string.
-
-Recommended:
-
-- Use the direct Postgres connection string or `DATABASE_URL`
-- Keep SSL enabled
-
-This backend supports both:
-
-- SQLite locally
-- Postgres in production
-
-### 3. Frontend on Vercel
-
-Import the repo into Vercel and set the project root to `krishagentui`.
-Set the Production Branch to `main` so Vercel tracks the same branch as the Render backend.
+Import `krishagentui` as the Vercel project root and keep `main` as the production branch.
 
 Set this environment variable in Vercel:
 
-- `NEXT_PUBLIC_API_BASE`
-  Example: `https://trading-agent-api-arungopichand.onrender.com/api`
+- `NEXT_PUBLIC_API_BASE_URL`
 
-Every push to GitHub will trigger:
+The frontend now reads its API base from env instead of falling back to localhost.
 
-- a new Render backend deploy
-- a new Vercel frontend deploy
+### GitHub Actions pipeline
 
-### 4. Branching model
+The workflow at [.github/workflows/deploy.yml](/c:/Users/arung/TradingAgent/.github/workflows/deploy.yml) runs on every push to `main` and:
 
-Use this branch flow going forward:
+- restores and builds the ASP.NET backend
+- installs and builds the frontend
+- deploys the frontend to Vercel with the CLI
+- triggers a Render backend deploy through the deploy hook
 
-- `main`
-  Production-ready code that stays deployed.
-- `dev`
-  Integration branch for upcoming work.
-- `feature/<name>`
-  Short-lived branches created from `dev`, then merged back into `dev`.
+### One-time setup
 
-When a set of features is stable in `dev`, merge `dev` into `main` to release it.
+1. Connect the repo to Render and create the `trading-backend` service from the root `render.yaml`.
+2. Create a Render deploy hook and save it as `RENDER_DEPLOY_HOOK_URL` in GitHub secrets.
+3. Import `krishagentui` into Vercel and confirm the project IDs match your GitHub secrets.
+4. Add `NEXT_PUBLIC_API_BASE_URL` in both Vercel and GitHub secrets.
+5. Push to `main`.
 
-### 5. Local vs Production
-
-Local development still uses SQLite from [appsettings.json](/c:/Users/arung/TradingAgent/KrishAgent/appsettings.json).
-
-Production switches automatically to Postgres when `DATABASE_URL` or a Postgres-style `ConnectionStrings__DefaultConnection` is present.
-
-### 6. Free-tier caveats
-
-- Render free web services sleep after inactivity, so the first request can be slow.
-- Supabase free projects have usage limits.
-- OpenAI is optional but not free.
-- Alpaca `iex` is free but not full-market SIP coverage.
+After that, `git push` to `main` will build and deploy both apps automatically.

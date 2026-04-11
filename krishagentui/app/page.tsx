@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useState } from 'react';
 
-const configuredApiBase = process.env.NEXT_PUBLIC_API_BASE?.trim().replace(/\/$/, '');
+const configuredApiBase = process.env.NEXT_PUBLIC_API_BASE_URL?.trim().replace(/\/$/, '');
 
 type DashboardTab = 'analysis' | 'watchlists' | 'intraday' | 'penny' | 'portfolio' | 'trades' | 'alerts';
 type LiveStreamStatus = 'idle' | 'connecting' | 'live' | 'reconnecting';
@@ -139,11 +139,7 @@ const watchlistGroups: { key: WatchlistListType; label: string; description: str
 ];
 
 export default function Home() {
-  const apiBase =
-    configuredApiBase ||
-    (typeof window === 'undefined'
-      ? 'http://localhost:5220/api'
-      : `http://${window.location.hostname}:5220/api`);
+  const apiBase = configuredApiBase ?? '';
 
   const [activeTab, setActiveTab] = useState<DashboardTab>('analysis');
   const [analysis, setAnalysis] = useState<AnalysisResult[]>([]);

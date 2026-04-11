@@ -34,11 +34,19 @@ builder.Services.AddControllers();
 builder.Services.AddSingleton<NodeBridgeService>();
 builder.Services.AddHttpClient<MarketService>()
     .ConfigurePrimaryHttpMessageHandler(CreateExternalApiHandler);
+builder.Services.AddHttpClient<FinnhubService>(client =>
+{
+    client.BaseAddress = new Uri("https://finnhub.io/api/v1/");
+})
+    .ConfigurePrimaryHttpMessageHandler(CreateExternalApiHandler);
 builder.Services.AddScoped<IndicatorService>();
 builder.Services.AddHttpClient<AIService>()
     .ConfigurePrimaryHttpMessageHandler(CreateExternalApiHandler);
 builder.Services.AddSingleton<LiveMarketStreamService>();
 builder.Services.AddScoped<DataService>();
+builder.Services.AddScoped<SymbolUniverseService>();
+builder.Services.AddSingleton<SignalEngine>();
+builder.Services.AddHostedService(serviceProvider => serviceProvider.GetRequiredService<SignalEngine>());
 builder.Services.AddScoped<IntradayTradingService>();
 builder.Services.AddScoped<PennyStockTradingService>();
 builder.Services.AddHostedService<TradingDataService>();
